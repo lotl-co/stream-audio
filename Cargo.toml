@@ -1,0 +1,55 @@
+[package]
+name = "stream-audio"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+description = "Real-time audio capture with multi-sink architecture"
+repository = "https://github.com/lotl-co/stream-audio"
+documentation = "https://docs.rs/stream-audio"
+readme = "README.md"
+keywords = ["audio", "capture", "streaming", "cpal", "async"]
+categories = ["multimedia::audio", "asynchronous"]
+
+[dependencies]
+async-trait = "0.1"
+cpal = "0.15"
+ringbuf = "0.4"
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "fs"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+# Correctness
+correctness = { level = "deny", priority = -1 }
+
+# Restriction (opt-in, strict)
+clone_on_ref_ptr = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+
+# Pedantic (stricter lints)
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+
+# Style
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
+
+# Complexity
+cognitive_complexity = "warn"
+
+# Performance
+perf = { level = "warn", priority = -1 }
