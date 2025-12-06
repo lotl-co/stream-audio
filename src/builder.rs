@@ -12,6 +12,22 @@ use crate::{
     event_callback, EventCallback, FormatPreset, StreamAudioError, StreamConfig, StreamEvent,
 };
 
+/// Channel capacity for audio chunks flowing to the router.
+/// Large enough to buffer ~10 seconds at 100ms chunks.
+const CHUNK_CHANNEL_CAPACITY: usize = 100;
+
+/// Channel capacity for router commands.
+/// Only need 1 since commands are rare (just Stop).
+const COMMAND_CHANNEL_CAPACITY: usize = 1;
+
+/// Default sample rate when Native format is used.
+/// 16kHz is standard for speech recognition.
+const DEFAULT_NATIVE_SAMPLE_RATE: u32 = 16000;
+
+/// Default channel count when Native format is used.
+/// Mono is efficient and sufficient for speech.
+const DEFAULT_NATIVE_CHANNELS: u16 = 1;
+
 /// Specifies which audio input device to use.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum DeviceSelection {
@@ -66,7 +82,7 @@ struct ResolvedAudioConfig {
 /// use stream_audio::{StreamAudio, AudioSource, FileSink, ChannelSink, FormatPreset};
 /// use tokio::sync::mpsc;
 ///
-/// let (tx, rx) = mpsc::channel(100);
+/// let (tx, rx) = mpsc::channel(32);
 ///
 /// let session = StreamAudio::builder()
 ///     .add_source("default", AudioSource::default_device())
@@ -270,8 +286,8 @@ impl StreamAudioBuilder {
     pub async fn start(self) -> Result<Session, StreamAudioError> {
         self.validate()?;
 
-        let (chunk_tx, chunk_rx) = mpsc::channel(100);
-        let (router_cmd_tx, router_cmd_rx) = mpsc::channel(1);
+        let (chunk_tx, chunk_rx) = mpsc::channel(CHUNK_CHANNEL_CAPACITY);
+        let (router_cmd_tx, router_cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
 
         let state = Arc::new(SessionState::new());
 
@@ -279,9 +295,12 @@ impl StreamAudioBuilder {
         let source_ids = self.source_ids();
 
         // Determine target sample rate and channels for merged audio.
-        // For Native format, use common defaults (16kHz mono) since merger needs consistent values.
-        let target_sample_rate = self.format.sample_rate().unwrap_or(16000);
-        let target_channels = self.format.channels().unwrap_or(1);
+        // For Native format, use common defaults since merger needs consistent values.
+        let target_sample_rate = self
+            .format
+            .sample_rate()
+            .unwrap_or(DEFAULT_NATIVE_SAMPLE_RATE);
+        let target_channels = self.format.channels().unwrap_or(DEFAULT_NATIVE_CHANNELS);
 
         let mut router = Router::with_routing(
             self.sinks.clone(),
