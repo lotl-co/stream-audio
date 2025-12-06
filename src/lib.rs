@@ -51,8 +51,10 @@ mod chunk;
 mod config;
 mod error;
 mod event;
+mod sink;
 
 pub use chunk::AudioChunk;
 pub use config::{FormatPreset, StreamConfig};
 pub use error::{SinkError, StreamAudioError};
 pub use event::{event_callback, EventCallback, StreamEvent};
+pub use sink::{ChannelSink, FileSink, Sink};
