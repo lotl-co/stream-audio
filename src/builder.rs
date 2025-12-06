@@ -313,13 +313,18 @@ impl StreamAudioBuilder {
     }
 
     /// Creates the capture configuration from resolved audio parameters.
-    fn create_capture_config(&self, audio_config: &ResolvedAudioConfig) -> CaptureConfig {
+    fn create_capture_config(
+        &self,
+        audio_config: &ResolvedAudioConfig,
+        source_id: Option<SourceId>,
+    ) -> CaptureConfig {
         CaptureConfig {
             device_sample_rate: audio_config.device_sample_rate,
             device_channels: audio_config.device_channels,
             target_sample_rate: audio_config.target_sample_rate,
             target_channels: audio_config.target_channels,
             chunk_duration: self.config.chunk_duration,
+            source_id,
         }
     }
 
@@ -335,6 +340,16 @@ impl StreamAudioBuilder {
     /// - Any sink fails to start
     pub async fn start(self) -> Result<Session, StreamAudioError> {
         self.validate()?;
+
+        if self.is_multi_source() {
+            self.start_multi_source().await
+        } else {
+            self.start_single_source().await
+        }
+    }
+
+    /// Starts a single-source capture session (v0.1 compatible).
+    async fn start_single_source(self) -> Result<Session, StreamAudioError> {
         let audio_config = self.resolve_device()?;
 
         let (chunk_tx, chunk_rx) = mpsc::channel(100);
@@ -345,7 +360,7 @@ impl StreamAudioBuilder {
         let router_handle = self.start_router(chunk_rx, router_cmd_rx).await?;
         let (capture_stream, ring_consumer) = audio_config.device.start_capture()?;
 
-        let capture_config = self.create_capture_config(&audio_config);
+        let capture_config = self.create_capture_config(&audio_config, None);
         let capture_handle =
             spawn_capture_bridge(ring_consumer, &capture_config, chunk_tx, Arc::clone(&state));
 
@@ -356,6 +371,86 @@ impl StreamAudioBuilder {
             capture_handle,
             capture_stream,
         ))
+    }
+
+    /// Starts a multi-source capture session.
+    async fn start_multi_source(self) -> Result<Session, StreamAudioError> {
+        if self.sources.is_empty() {
+            return Err(StreamAudioError::NoSourcesConfigured);
+        }
+
+        let (chunk_tx, chunk_rx) = mpsc::channel(100);
+        let (router_cmd_tx, router_cmd_rx) = mpsc::channel(1);
+
+        let state = Arc::new(SessionState::new());
+
+        // Create router with routing
+        let source_ids = self.source_ids();
+        let mut router = Router::with_routing(
+            self.sinks.clone(),
+            self.sink_routes.clone(),
+            source_ids,
+            self.config.clone(),
+        )?;
+        if let Some(callback) = self.event_callback.clone() {
+            router = router.with_event_callback(callback);
+        }
+        router.start_sinks().await?;
+
+        let router_handle = tokio::spawn(async move {
+            router.run(chunk_rx, router_cmd_rx).await;
+        });
+
+        // Start capture for each source
+        let mut capture_handles = Vec::new();
+        let mut capture_streams = Vec::new();
+
+        for (source_id, source) in &self.sources {
+            let audio_config = self.resolve_source_device(source)?;
+            let (capture_stream, ring_consumer) = audio_config.device.start_capture()?;
+
+            let capture_config = self.create_capture_config(&audio_config, Some(source_id.clone()));
+            let capture_handle = spawn_capture_bridge(
+                ring_consumer,
+                &capture_config,
+                chunk_tx.clone(),
+                Arc::clone(&state),
+            );
+
+            capture_handles.push(capture_handle);
+            capture_streams.push(capture_stream);
+        }
+
+        Ok(Session::new_multi(
+            state,
+            router_cmd_tx,
+            router_handle,
+            capture_handles,
+            capture_streams,
+        ))
+    }
+
+    /// Resolves a source's device.
+    fn resolve_source_device(
+        &self,
+        source: &AudioSource,
+    ) -> Result<ResolvedAudioConfig, StreamAudioError> {
+        let device = match &source.device {
+            DeviceSelection::SystemDefault => AudioDevice::open_default()?,
+            DeviceSelection::ByName(name) => AudioDevice::open_by_name(name)?,
+        };
+
+        let (device_sample_rate, device_channels) = device.native_config()?;
+        let target_sample_rate = self.format.sample_rate().unwrap_or(device_sample_rate);
+        let target_channels = self.format.channels().unwrap_or(device_channels);
+
+        Ok(ResolvedAudioConfig {
+            device,
+            target_sample_rate,
+            target_channels,
+            device_sample_rate,
+            device_channels,
+        })
     }
 }
 
