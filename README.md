@@ -1,6 +1,7 @@
 # stream-audio
 
-> **Note:** This crate is a work in progress. It currently does nothing functional and exists to reserve the crate name. Check back soon!
+> **Note:** This crate is a work in progress. It currently does nothing functional and exists to reserve the crate name.
+> Check back soon!
 
 Real-time audio capture with multi-sink architecture.
 
@@ -51,6 +52,10 @@ CPAL AUDIO THREAD (high-priority, never blocks)
 TOKIO RUNTIME
   └── Router Task → FileSink, ChannelSink, CustomSink...
 ```
+
+Internally, the crate separates real-time capture (CPAL callback thread) from processing (Tokio tasks). The callback
+pushes samples into a lock-free ring buffer; Tokio drains the buffer and delivers audio to one or more sinks. This
+guarantees that audio capture never blocks even under backpressure.
 
 **Key invariant:** The CPAL callback never waits. If sinks are slow, the ring buffer absorbs pressure.
 

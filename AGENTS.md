@@ -2,6 +2,14 @@
 
 Guidelines for using AI tools (Claude, Cursor, Copilot, ChatGPT, etc.) with this repo.
 
+
+## How to Behave
+
+- Prefer small, focused changes.
+- Preserve public API stability unless explicitly told otherwise.
+- When unsure, propose changes in comments instead of modifying code directly.
+- Never introduce blocking operations into real-time code paths.
+
 ## Project Summary
 
 `stream-audio` is a Rust crate for real-time audio capture using CPAL. It uses:
@@ -42,6 +50,13 @@ Core flow:
 - Add tests using mock sources/sinks.
 - Improve documentation, examples, and error messages.
 - Refactor internals without changing the public API or invariants above.
+
+## Boundaries (Do Not Touch)
+
+- CPAL callback thread behavior or timing.
+- Public API signatures (unless asked).
+- Threading model (CPAL thread → ring buffer → Tokio).
+- Any change that would make capture blocking or introduce locks in the callback.
 
 ## Handy Commands
 
