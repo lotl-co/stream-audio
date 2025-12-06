@@ -17,6 +17,12 @@ Real-time audio capture with multi-sink architecture.
 - Simple builder API with sensible defaults
 - Fully async with Tokio
 
+## Scope
+
+This crate is designed for **local/desktop audio capture** - capturing audio from system devices (microphones, system audio, loopback) on end-user machines.
+
+**Out of scope:** Server-side audio ingestion (WebRTC, SIP/telephony streams, RTP). These use cases have fundamentally different requirements (async network I/O vs. real-time device callbacks) and are better served by a separate implementation that can share downstream processing components.
+
 ## Quick Start
 
 ```rust
