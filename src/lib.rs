@@ -49,6 +49,8 @@
 
 mod chunk;
 mod config;
+mod error;
 
 pub use chunk::AudioChunk;
 pub use config::{FormatPreset, StreamConfig};
+pub use error::{SinkError, StreamAudioError};
