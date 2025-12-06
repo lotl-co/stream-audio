@@ -52,9 +52,11 @@ mod config;
 mod error;
 mod event;
 mod sink;
+pub mod source;
 
 pub use chunk::AudioChunk;
 pub use config::{FormatPreset, StreamConfig};
 pub use error::{SinkError, StreamAudioError};
 pub use event::{event_callback, EventCallback, StreamEvent};
 pub use sink::{ChannelSink, FileSink, Sink};
+pub use source::{default_input_device_name, list_input_devices, AudioDevice, DeviceConfig, MockSource};
