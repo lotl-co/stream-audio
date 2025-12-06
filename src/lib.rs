@@ -50,7 +50,9 @@
 mod chunk;
 mod config;
 mod error;
+mod event;
 
 pub use chunk::AudioChunk;
 pub use config::{FormatPreset, StreamConfig};
 pub use error::{SinkError, StreamAudioError};
+pub use event::{event_callback, EventCallback, StreamEvent};
