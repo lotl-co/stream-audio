@@ -73,6 +73,14 @@ Use these terms consistently:
 ---
 
 ## Helpful Commands
+
+### Just (preferred)
+```
+just check   # Run all checks (fmt, clippy, test, doc)
+just fmt     # Format code
+```
+
+### Cargo
 ```
 cargo build
 cargo test
