@@ -51,15 +51,15 @@ cargo test -- --nocapture
 
 Use the domain language consistently:
 
-| Term | Meaning |
-|------|---------|
-| Source | Audio input device |
-| Sink | Audio destination |
-| Chunk | Buffer of audio samples |
+| Term    | Meaning                  |
+|---------|--------------------------|
+| Source  | Audio input device       |
+| Sink    | Audio destination        |
+| Chunk   | Buffer of audio samples  |
 | Session | Active recording session |
 
 ### SOLID Principles
-
+Ò
 - **Single Responsibility**: One reason to change per module
 - **Open/Closed**: Extend via traits, not modification
 - **Liskov Substitution**: All Sink implementations are interchangeable
