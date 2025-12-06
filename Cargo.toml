@@ -14,9 +14,10 @@ categories = ["multimedia::audio", "asynchronous"]
 [dependencies]
 async-trait = "0.1"
 cpal = "0.15"
+futures = "0.3"
 ringbuf = "0.4"
 thiserror = "2"
-tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "fs"] }
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "fs", "time"] }
 tracing = "0.1"
 
 [dev-dependencies]
