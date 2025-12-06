@@ -53,7 +53,7 @@
     clippy::cast_possible_wrap,
     clippy::cast_lossless
 )]
-// Mutex unwrap is acceptable - poisoning indicates a bug elsewhere
+// unwrap/expect allowed in tests only (per AGENTS.md)
 #![allow(clippy::unwrap_used)]
 // These doc lints are too strict for internal implementation details
 #![allow(clippy::missing_panics_doc, clippy::missing_errors_doc)]

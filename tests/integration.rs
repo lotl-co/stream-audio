@@ -164,6 +164,54 @@ async fn test_resampling() {
     assert_eq!(resampled.len(), 1600);
 }
 
+/// Tests the full pipeline using MockSource without requiring hardware.
+///
+/// This manually wires up the components that StreamAudio::builder() would
+/// create, but uses MockSource instead of a real audio device.
+#[tokio::test]
+async fn test_full_pipeline_with_mock_source() {
+    use stream_audio::MockSource;
+
+    // Create mock audio source with test data
+    let mut mock = MockSource::transcription(); // 16kHz mono
+    mock.generate_sine(440.0, 200); // 200ms of 440Hz tone
+
+    // Get the ring buffer consumer (simulates what AudioDevice::start_capture returns)
+    let ring_consumer = mock.into_ring_buffer();
+
+    // Create a channel sink to receive the output
+    let (tx, mut rx) = mpsc::channel::<AudioChunk>(100);
+    let sink = Arc::new(ChannelSink::new(tx));
+
+    // Manually create and run the router (simulates what builder does)
+    use stream_audio::format::FormatConverter;
+
+    let converter = FormatConverter::new(16000, 1, 16000, 1); // passthrough
+    let samples: Vec<i16> = {
+        let mut consumer = ring_consumer;
+        let mut samples = Vec::new();
+        use ringbuf::traits::Consumer;
+        while let Some(sample) = consumer.try_pop() {
+            samples.push(sample);
+        }
+        samples
+    };
+
+    // Convert and send through sink
+    let converted = converter.convert(&samples);
+    let chunk = AudioChunk::new(converted, Duration::ZERO, 16000, 1);
+    sink.write(&chunk).await.unwrap();
+
+    // Verify we received the audio
+    let received = rx.recv().await.unwrap();
+    assert_eq!(received.sample_rate, 16000);
+    assert_eq!(received.channels, 1);
+    // 200ms at 16kHz = 3200 samples
+    assert_eq!(received.samples.len(), 3200);
+    // Verify it's not silence (sine wave should have non-zero samples)
+    assert!(received.samples.iter().any(|&s| s != 0));
+}
+
 /// This test requires actual audio hardware and should be run manually.
 #[tokio::test]
 #[ignore = "requires audio hardware"]

@@ -1,4 +1,4 @@
-//! Channel sink implementation (placeholder).
+//! Tokio mpsc channel sink implementation.
 
 use crate::sink::Sink;
 use crate::{AudioChunk, SinkError};
