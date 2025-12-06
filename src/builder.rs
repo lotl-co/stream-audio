@@ -97,7 +97,7 @@ struct ResolvedAudioConfig {
 pub struct StreamAudioBuilder {
     /// Single-source device (backward compatibility).
     device: DeviceSelection,
-    /// Multi-source configurations: (source_id, source_config).
+    /// Multi-source configurations: `(source_id, source_config)` pairs.
     sources: Vec<(SourceId, AudioSource)>,
     /// Format preset for all sources.
     format: FormatPreset,
