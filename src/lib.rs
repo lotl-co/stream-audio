@@ -47,18 +47,22 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod builder;
 mod chunk;
 mod config;
 mod error;
 mod event;
 pub mod format;
 mod pipeline;
+mod session;
 mod sink;
 pub mod source;
 
+pub use builder::{StreamAudio, StreamAudioBuilder};
 pub use chunk::AudioChunk;
 pub use config::{FormatPreset, StreamConfig};
 pub use error::{SinkError, StreamAudioError};
 pub use event::{event_callback, EventCallback, StreamEvent};
+pub use session::{Session, SessionStats};
 pub use sink::{ChannelSink, FileSink, Sink};
 pub use source::{default_input_device_name, list_input_devices, AudioDevice, DeviceConfig, MockSource};

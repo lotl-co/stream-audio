@@ -44,6 +44,7 @@ pub fn f32_slice_to_i16(samples: &[f32]) -> Vec<i16> {
 }
 
 /// Batch converts i16 samples to f32.
+#[allow(dead_code)] // Useful utility, may be used in future
 pub fn i16_slice_to_f32(samples: &[i16]) -> Vec<f32> {
     samples.iter().map(|&s| i16_to_f32(s)).collect()
 }
