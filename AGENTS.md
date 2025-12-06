@@ -1,152 +1,54 @@
-# AI Assistant Guidelines
+# AI Assistants
 
-This document provides guidance for AI assistants (Claude, Copilot, Cursor, etc.) when working with this codebase.
+Guidelines for using AI tools (Claude, Cursor, Copilot, ChatGPT, etc.) with this repo.
 
-## Project Overview
+## Project Summary
 
-`stream-audio` is a Rust crate for real-time audio capture with a multi-sink architecture. It provides non-blocking audio capture via CPAL with multiple simultaneous destinations (file, channel, custom) and resilient buffering.
+`stream-audio` is a Rust crate for real-time audio capture using CPAL. It uses:
+- a non-blocking audio callback on the CPAL thread,
+- a ring buffer as a safety valve,
+- Tokio tasks that forward audio to one or more sinks (file, channel, custom).
 
-**Repository:** https://github.com/lotl-co/stream-audio
+Core flow:
 
-## Architecture Constraints
+> CPAL audio thread (never blocks) → ring buffer → Tokio runtime → sinks
 
-### Thread Boundary (Critical)
+## Invariants (Do Not Break)
 
-The CPAL audio callback runs on a high-priority OS thread and **must never block**. All blocking operations happen in the Tokio runtime.
+- CPAL callback must **never block**.
+- All I/O (file, network, channels) happens **off** the audio thread.
+- It is OK to **drop audio under backpressure**; it is NOT OK to stall capture.
+- Library code should **not panic** in normal paths (`unwrap`/`expect` are for tests & binaries only).
 
-```
-CPAL Thread (never blocks) → Ring Buffer → Tokio Runtime → Sinks
-```
+## Core Concepts
 
-### Technical Stack
+- **Source** – audio input device (e.g. mic, system audio).
+- **Sink** – destination for audio (file, channel, network, etc.).
+- **Chunk** – small buffer of samples + metadata.
+- **Session** – a running capture from `start()` to `stop()`.
 
-| Component | Choice | Rationale |
-|-----------|--------|-----------|
-| Async Runtime | Tokio | Industry standard, fully embraced |
-| Ring Buffer | `ringbuf` crate | Lock-free SPSC queue |
-| Audio I/O | CPAL | Cross-platform audio |
-| Error Handling | `thiserror` | Derive macro for errors |
+## Technical Decisions
 
-## Development Practices
+- Async runtime: **Tokio** (no other runtimes).
+- Ring buffer: **`ringbuf`** crate.
+- ChannelSink: **`tokio::sync::mpsc::Sender<AudioChunk>`**.
+- Error model:
+  - Fatal errors (`StreamAudioError`) stop `start()`.
+  - Recoverable issues are surfaced as runtime events; the stream should continue where possible.
 
-### Test-Driven Development (TDD)
+## Good Tasks for AI
 
-1. Write failing tests first
-2. Implement minimal code to pass
-3. Refactor while keeping tests green
+- Implement new sinks (e.g. TCP/UDP/in-memory sinks).
+- Add tests using mock sources/sinks.
+- Improve documentation, examples, and error messages.
+- Refactor internals without changing the public API or invariants above.
 
-```bash
-cargo test                     # Run all tests
-cargo test test_name           # Run specific test
-cargo test -- --nocapture      # Show println output
-```
-
-### Domain-Driven Design (DDD)
-
-Core domain terms:
-
-| Term | Definition |
-|------|------------|
-| **Source** | Audio input device (microphone, system audio) |
-| **Sink** | Destination for audio (file, channel, network) |
-| **Chunk** | Buffer of samples with metadata |
-| **Session** | Recording session from start() to stop() |
-
-### SOLID Principles
-
-- **S**: Each module has a single responsibility (source/, sink/, pipeline/)
-- **O**: `Sink` trait is open for extension, closed for modification
-- **L**: All `Sink` implementations are substitutable
-- **I**: Small, focused traits (`Sink` only requires `write()`)
-- **D**: Depend on `Sink` trait, not concrete implementations
-
-### Clean Code
-
-- Functions should do one thing
-- Use descriptive names over comments
-- Keep functions small and focused
-- Handle errors explicitly (no `.unwrap()` in library code)
-
-## Code Style
-
-### Formatting and Linting
+## Handy Commands
 
 ```bash
-cargo fmt                      # Format code
-cargo clippy                   # Run lints
-cargo clippy --fix             # Auto-fix where possible
+cargo build
+cargo test
+cargo doc --open
+cargo clippy
+cargo fmt
 ```
-
-### Error Handling
-
-- **Fatal errors** (`StreamAudioError`): Returned from `start()`, prevent stream from starting
-- **Recoverable events** (`StreamEvent`): Emitted via callback, stream continues
-
-```rust
-// Good: Explicit error handling
-let device = get_device().map_err(|e| StreamAudioError::DeviceNotFound {
-    name: device_name.to_string()
-})?;
-
-// Bad: Panics in library code
-let device = get_device().unwrap();
-```
-
-### Documentation
-
-Every public item needs documentation. Balance this with clean code comments explaining "why" over "what".
-
-```rust
-/// A destination for audio data.
-///
-/// # Example
-///
-/// ```rust
-/// use stream_audio::Sink;
-///
-/// struct MySink;
-///
-/// impl Sink for MySink {
-///     // ...
-/// }
-/// ```
-pub trait Sink: Send + Sync {
-    // ...
-}
-```
-
-## Module Structure
-
-```
-src/
-├── lib.rs           # Public API, re-exports
-├── builder.rs       # StreamAudio::builder()
-├── session.rs       # Session lifecycle
-├── config.rs        # StreamConfig, FormatPreset
-├── error.rs         # StreamAudioError, SinkError
-├── event.rs         # StreamEvent, EventCallback
-├── chunk.rs         # AudioChunk struct
-├── source/          # Audio input devices
-├── sink/            # Sink trait and implementations
-├── pipeline/        # Ring buffer and router
-└── format/          # Resampling and conversion
-```
-
-## Common Commands
-
-```bash
-cargo build                    # Build
-cargo test                     # Test
-cargo doc --open               # Documentation
-cargo clippy                   # Lint
-cargo fmt                      # Format
-cargo bench                    # Benchmarks (when available)
-```
-
-## What NOT to Do
-
-- Never block in the CPAL callback thread
-- Never use `.unwrap()` or `.expect()` in library code
-- Never ignore clippy warnings without explicit `#[allow(...)]` with justification
-- Never commit without running `cargo fmt` and `cargo clippy`
-- Never add dependencies without considering the compile-time impact
