@@ -1,0 +1,151 @@
+//! Runtime events for monitoring stream health.
+//!
+//! Events are non-fatal notifications about stream behavior. The stream
+//! continues running after events are emitted - they're for logging/metrics,
+//! not error handling.
+
+use std::sync::Arc;
+
+/// Runtime events emitted during audio capture.
+///
+/// These are informational events, not errors. The stream continues
+/// running after any event is emitted. Use the [`EventCallback`] to
+/// log these or update metrics.
+///
+/// # Example
+///
+/// ```
+/// use stream_audio::StreamEvent;
+///
+/// fn handle_event(event: StreamEvent) {
+///     match event {
+///         StreamEvent::BufferOverflow { dropped_ms } => {
+///             eprintln!("Warning: dropped {}ms of audio", dropped_ms);
+///         }
+///         StreamEvent::SinkError { sink_name, error } => {
+///             eprintln!("Sink '{}' error: {}", sink_name, error);
+///         }
+///         StreamEvent::StreamInterrupted { reason } => {
+///             eprintln!("Stream interrupted: {}", reason);
+///         }
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    /// The ring buffer dropped audio because sinks couldn't keep up.
+    ///
+    /// This happens when all sinks are slower than real-time for an
+    /// extended period. Consider increasing `ring_buffer_duration` or
+    /// optimizing sink performance.
+    BufferOverflow {
+        /// Approximate duration of audio that was dropped.
+        dropped_ms: u64,
+    },
+
+    /// A sink encountered an error during write.
+    ///
+    /// The router will retry according to [`StreamConfig`](crate::StreamConfig)
+    /// settings. If retries are exhausted, the sink may be disabled.
+    SinkError {
+        /// Name of the sink that errored.
+        sink_name: String,
+        /// Description of the error.
+        error: String,
+    },
+
+    /// The audio stream was temporarily interrupted.
+    ///
+    /// This can happen due to OS preemption, device switching, or other
+    /// transient issues. Capture typically resumes automatically.
+    StreamInterrupted {
+        /// Description of why the stream was interrupted.
+        reason: String,
+    },
+}
+
+/// Callback type for receiving runtime events.
+///
+/// Register an event callback via [`StreamAudioBuilder::on_event()`] to
+/// receive notifications about buffer overflow, sink errors, and stream
+/// interruptions.
+///
+/// [`StreamAudioBuilder::on_event()`]: crate::StreamAudioBuilder::on_event
+///
+/// # Example
+///
+/// ```ignore
+/// use stream_audio::{StreamAudio, StreamEvent};
+///
+/// let session = StreamAudio::builder()
+///     .on_event(|event| {
+///         tracing::warn!(?event, "stream event");
+///     })
+///     .start()
+///     .await?;
+/// ```
+pub type EventCallback = Arc<dyn Fn(StreamEvent) + Send + Sync>;
+
+/// Creates an [`EventCallback`] from a closure.
+///
+/// This is a convenience function for creating event callbacks without
+/// manually wrapping in `Arc`.
+///
+/// # Example
+///
+/// ```
+/// use stream_audio::{event_callback, StreamEvent};
+///
+/// let callback = event_callback(|event| {
+///     println!("Got event: {:?}", event);
+/// });
+/// ```
+pub fn event_callback<F>(f: F) -> EventCallback
+where
+    F: Fn(StreamEvent) + Send + Sync + 'static,
+{
+    Arc::new(f)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stream_event_debug() {
+        let event = StreamEvent::BufferOverflow { dropped_ms: 100 };
+        let debug = format!("{:?}", event);
+        assert!(debug.contains("BufferOverflow"));
+        assert!(debug.contains("100"));
+    }
+
+    #[test]
+    fn test_stream_event_clone() {
+        let event = StreamEvent::SinkError {
+            sink_name: "file".to_string(),
+            error: "disk full".to_string(),
+        };
+        let cloned = event.clone();
+        if let StreamEvent::SinkError { sink_name, error } = cloned {
+            assert_eq!(sink_name, "file");
+            assert_eq!(error, "disk full");
+        } else {
+            panic!("Expected SinkError variant");
+        }
+    }
+
+    #[test]
+    fn test_event_callback_helper() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = called.clone();
+
+        let callback = event_callback(move |_| {
+            called_clone.store(true, Ordering::SeqCst);
+        });
+
+        callback(StreamEvent::BufferOverflow { dropped_ms: 0 });
+        assert!(called.load(Ordering::SeqCst));
+    }
+}

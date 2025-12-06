@@ -1,7 +1,6 @@
 //! # stream-audio
 //!
-//! **Note:** This crate is a work in progress and currently does nothing functional.
-//! It exists to reserve the crate name. Check back soon!
+//! **Note:** This crate is under active development. The API may change before 1.0.
 //!
 //! Real-time audio capture with multi-sink architecture.
 //!
@@ -46,3 +45,37 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+// Audio code requires intentional numeric casts between sample formats
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    clippy::cast_lossless
+)]
+// unwrap/expect allowed in tests only (per AGENTS.md)
+#![allow(clippy::unwrap_used)]
+// These doc lints are too strict for internal implementation details
+#![allow(clippy::missing_panics_doc, clippy::missing_errors_doc)]
+
+mod builder;
+mod chunk;
+mod config;
+mod error;
+mod event;
+pub mod format;
+mod pipeline;
+mod session;
+mod sink;
+pub mod source;
+
+pub use builder::{DeviceSelection, StreamAudio, StreamAudioBuilder};
+pub use chunk::AudioChunk;
+pub use config::{FormatPreset, StreamConfig};
+pub use error::{SinkError, StreamAudioError};
+pub use event::{event_callback, EventCallback, StreamEvent};
+pub use session::{Session, SessionStats};
+pub use sink::{ChannelSink, FileSink, Sink};
+pub use source::{
+    default_input_device_name, list_input_devices, AudioDevice, DeviceConfig, MockSource,
+};
