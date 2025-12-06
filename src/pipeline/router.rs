@@ -61,12 +61,13 @@ impl Router {
 
         // Create merger if there are merge routes
         let merger = if routing_table.has_merge_routes() {
-            Some(Mutex::new(TimeWindowMerger::new(
+            Some(Mutex::new(TimeWindowMerger::with_max_pending(
                 config.merge_window_duration,
                 config.merge_window_timeout,
                 source_ids,
                 sample_rate,
                 channels,
+                config.max_pending_windows,
             )))
         } else {
             None
@@ -174,9 +175,10 @@ impl Router {
             // Feed to merger if applicable
             if let Some(ref merger_mutex) = self.merger {
                 let mut merger = merger_mutex.lock().await;
-                if let Some(result) = merger.add_chunk(Arc::new(chunk.clone())) {
-                    // Merged chunk ready - send to merge sinks
-                    drop(merger); // Release lock before async write
+                let results = merger.add_chunk(Arc::new(chunk.clone()));
+                drop(merger); // Release lock before async writes
+
+                for result in results {
                     self.write_merged_chunk(&result.chunk, table).await;
 
                     if !result.is_complete() {

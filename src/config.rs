@@ -99,7 +99,20 @@ pub struct StreamConfig {
     ///
     /// [`StreamEvent::MergeIncomplete`]: crate::StreamEvent::MergeIncomplete
     pub merge_window_timeout: Duration,
+
+    /// Maximum pending merge windows before oldest is evicted.
+    ///
+    /// Limits merge backlog to N × `merge_window_duration`. Increase if sources
+    /// have significant clock drift. Evicted windows emit with available data
+    /// and a [`StreamEvent::MergeIncomplete`] event.
+    /// Default: 10 (~1 second at 100ms windows)
+    ///
+    /// [`StreamEvent::MergeIncomplete`]: crate::StreamEvent::MergeIncomplete
+    pub max_pending_windows: usize,
 }
+
+/// Default maximum pending windows (~1 second at 100ms windows).
+const DEFAULT_MAX_PENDING_WINDOWS: usize = 10;
 
 impl Default for StreamConfig {
     fn default() -> Self {
@@ -110,6 +123,7 @@ impl Default for StreamConfig {
             sink_retry_delay: Duration::from_millis(100),
             merge_window_duration: Duration::from_millis(100),
             merge_window_timeout: Duration::from_millis(200),
+            max_pending_windows: DEFAULT_MAX_PENDING_WINDOWS,
         }
     }
 }
@@ -146,5 +160,6 @@ mod tests {
         assert_eq!(config.sink_retry_delay, Duration::from_millis(100));
         assert_eq!(config.merge_window_duration, Duration::from_millis(100));
         assert_eq!(config.merge_window_timeout, Duration::from_millis(200));
+        assert_eq!(config.max_pending_windows, 10);
     }
 }

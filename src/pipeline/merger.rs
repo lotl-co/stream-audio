@@ -44,6 +44,8 @@ pub struct TimeWindowMerger {
     sample_rate: u32,
     /// Output channel count (for silence generation).
     channels: u16,
+    /// Maximum pending windows before oldest is evicted.
+    max_pending: usize,
 }
 
 /// A window awaiting completion.
@@ -56,6 +58,9 @@ struct PendingWindow {
     timestamp: Duration,
 }
 
+/// Default max pending windows if not specified.
+const DEFAULT_MAX_PENDING: usize = 10;
+
 impl TimeWindowMerger {
     /// Creates a new merger for the given sources.
     pub fn new(
@@ -65,6 +70,25 @@ impl TimeWindowMerger {
         sample_rate: u32,
         channels: u16,
     ) -> Self {
+        Self::with_max_pending(
+            window_duration,
+            window_timeout,
+            expected_sources,
+            sample_rate,
+            channels,
+            DEFAULT_MAX_PENDING,
+        )
+    }
+
+    /// Creates a new merger with a custom max pending window limit.
+    pub fn with_max_pending(
+        window_duration: Duration,
+        window_timeout: Duration,
+        expected_sources: Vec<SourceId>,
+        sample_rate: u32,
+        channels: u16,
+        max_pending: usize,
+    ) -> Self {
         Self {
             window_duration,
             window_timeout,
@@ -72,15 +96,18 @@ impl TimeWindowMerger {
             pending: HashMap::new(),
             sample_rate,
             channels,
+            max_pending,
         }
     }
 
     /// Adds a chunk to the merger.
     ///
-    /// Returns a merged chunk if this completes a window, or `None` if
-    /// still waiting for other sources.
-    pub fn add_chunk(&mut self, chunk: Arc<AudioChunk>) -> Option<MergeResult> {
-        let source_id = chunk.source_id.as_ref()?;
+    /// Returns merge results for any completed or evicted windows.
+    /// Empty vec if still waiting for other sources.
+    pub fn add_chunk(&mut self, chunk: Arc<AudioChunk>) -> Vec<MergeResult> {
+        let Some(source_id) = chunk.source_id.as_ref() else {
+            return Vec::new();
+        };
         let window_id = self.window_id_for_timestamp(chunk.timestamp);
 
         let window = self
@@ -96,12 +123,37 @@ impl TimeWindowMerger {
 
         window.chunks.insert(source_id.clone(), chunk);
 
+        let mut results = Vec::new();
+
         // Check if window is complete
         if self.is_window_complete(window_id) {
-            return self.emit_window(window_id);
+            if let Some(result) = self.emit_window(window_id) {
+                results.push(result);
+            }
         }
 
-        None
+        // Evict oldest windows if over limit
+        results.extend(self.evict_excess_windows());
+
+        results
+    }
+
+    /// Evicts oldest windows if pending count exceeds max_pending.
+    fn evict_excess_windows(&mut self) -> Vec<MergeResult> {
+        let mut results = Vec::new();
+
+        while self.pending.len() > self.max_pending {
+            // Find oldest window by ID (lower ID = older timestamp)
+            if let Some(&oldest_id) = self.pending.keys().min() {
+                if let Some(result) = self.emit_window(oldest_id) {
+                    results.push(result);
+                }
+            } else {
+                break;
+            }
+        }
+
+        results
     }
 
     /// Checks for timed-out windows and returns any that need emitting.
@@ -276,15 +328,15 @@ mod tests {
 
         // Add mic chunk for window 0 (0-100ms)
         let mic_chunk = make_chunk("mic", 50, vec![100, 200, 300]);
-        let result = merger.add_chunk(mic_chunk);
-        assert!(result.is_none()); // Not complete yet
+        let results = merger.add_chunk(mic_chunk);
+        assert!(results.is_empty()); // Not complete yet
 
         // Add speaker chunk for same window
         let speaker_chunk = make_chunk("speaker", 50, vec![50, 100, 150]);
-        let result = merger.add_chunk(speaker_chunk);
-        assert!(result.is_some()); // Complete!
+        let results = merger.add_chunk(speaker_chunk);
+        assert_eq!(results.len(), 1); // Complete!
 
-        let result = result.unwrap();
+        let result = &results[0];
         assert!(result.is_complete());
         assert_eq!(result.window_id, 0);
         // Average of [100,200,300] and [50,100,150] = [75,150,225]
@@ -303,12 +355,12 @@ mod tests {
 
         // Add chunks to different windows
         let mic_chunk = make_chunk("mic", 50, vec![100]); // Window 0
-        let result = merger.add_chunk(mic_chunk);
-        assert!(result.is_none());
+        let results = merger.add_chunk(mic_chunk);
+        assert!(results.is_empty());
 
         let speaker_chunk = make_chunk("speaker", 150, vec![200]); // Window 1
-        let result = merger.add_chunk(speaker_chunk);
-        assert!(result.is_none());
+        let results = merger.add_chunk(speaker_chunk);
+        assert!(results.is_empty());
 
         // Both windows still pending
         assert_eq!(merger.pending_count(), 2);
@@ -397,5 +449,32 @@ mod tests {
 
         merger.clear();
         assert_eq!(merger.pending_count(), 0);
+    }
+
+    #[test]
+    fn test_merger_evicts_oldest_when_over_limit() {
+        // Create merger with max 2 pending windows
+        let mut merger = TimeWindowMerger::with_max_pending(
+            Duration::from_millis(100),
+            Duration::from_millis(1000), // Long timeout so we test eviction not timeout
+            vec![SourceId::new("mic"), SourceId::new("speaker")],
+            16000,
+            1,
+            2, // max 2 pending
+        );
+
+        // Add chunks to windows 0, 1 (from mic only - incomplete)
+        merger.add_chunk(make_chunk("mic", 50, vec![100])); // Window 0
+        merger.add_chunk(make_chunk("mic", 150, vec![200])); // Window 1
+        assert_eq!(merger.pending_count(), 2);
+
+        // Add chunk to window 2 - should evict window 0
+        let results = merger.add_chunk(make_chunk("mic", 250, vec![300])); // Window 2
+        assert_eq!(results.len(), 1); // Window 0 evicted
+        assert_eq!(results[0].window_id, 0);
+        assert!(!results[0].is_complete()); // Missing speaker
+
+        // Should now have windows 1 and 2
+        assert_eq!(merger.pending_count(), 2);
     }
 }
