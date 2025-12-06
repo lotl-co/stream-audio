@@ -102,6 +102,18 @@ impl AudioDevice {
         &self.config
     }
 
+    /// Returns the device's native capture format (sample rate, channels).
+    ///
+    /// This queries CPAL for what the device will actually capture at,
+    /// which may differ from the requested format.
+    pub fn native_config(&self) -> Result<(u32, u16), StreamAudioError> {
+        let config = self
+            .device
+            .default_input_config()
+            .map_err(|e| StreamAudioError::BackendError(e.to_string()))?;
+        Ok((config.sample_rate().0, config.channels()))
+    }
+
     /// Starts capturing audio and returns a running stream.
     ///
     /// The returned `CaptureStream` must be kept alive for capture to continue.

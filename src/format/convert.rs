@@ -38,7 +38,6 @@ pub fn stereo_to_mono(stereo: &[i16]) -> Vec<i16> {
 }
 
 /// Converts mono samples to stereo by duplicating each sample.
-#[allow(dead_code)] // Useful utility for future use
 pub fn mono_to_stereo(mono: &[i16]) -> Vec<i16> {
     mono.iter().flat_map(|&s| [s, s]).collect()
 }

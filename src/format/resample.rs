@@ -53,7 +53,6 @@ pub fn resample(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
 /// Resamples stereo audio.
 ///
 /// Processes left and right channels separately.
-#[allow(dead_code)] // Useful utility for future use
 pub fn resample_stereo(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
     if from_rate == to_rate || samples.is_empty() {
         return samples.to_vec();
