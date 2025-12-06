@@ -256,14 +256,7 @@ impl Router {
         mut chunk_rx: mpsc::Receiver<AudioChunk>,
         mut cmd_rx: mpsc::Receiver<RouterCommand>,
     ) {
-        // Create timeout check interval only if we have merge routes
-        let timeout_interval = if self.merger.is_some() {
-            Some(tokio::time::interval(self.config.merge_window_timeout / 2))
-        } else {
-            None
-        };
-
-        // Use a pinned interval for tokio::select!
+        let timeout_interval = self.create_timeout_interval();
         tokio::pin!(timeout_interval);
 
         loop {
@@ -272,26 +265,12 @@ impl Router {
                     self.write_chunk(&chunk).await;
                 }
                 Some(cmd) = cmd_rx.recv() => {
-                    match cmd {
-                        RouterCommand::Stop => {
-                            // Check final timeouts
-                            self.check_merge_timeouts().await;
-                            // Drain remaining chunks
-                            while let Ok(chunk) = chunk_rx.try_recv() {
-                                self.write_chunk(&chunk).await;
-                            }
-                            break;
-                        }
+                    if self.handle_command(cmd, &mut chunk_rx).await {
+                        break;
                     }
                 }
-                // Check merge timeouts periodically (only if merger exists)
-                _ = async {
-                    if let Some(ref mut interval) = timeout_interval.as_mut().as_pin_mut() {
-                        interval.tick().await
-                    } else {
-                        std::future::pending::<tokio::time::Instant>().await
-                    }
-                } => {
+                // Timeout tick only fires if merger exists
+                _ = Self::tick_or_pend(&mut timeout_interval) => {
                     self.check_merge_timeouts().await;
                 }
                 else => break,
@@ -299,6 +278,47 @@ impl Router {
         }
 
         self.stop_sinks().await;
+    }
+
+    /// Creates timeout interval for merge window checks (if merging is enabled).
+    fn create_timeout_interval(&self) -> Option<tokio::time::Interval> {
+        // Check at half the timeout period to catch windows before they exceed timeout
+        self.merger
+            .as_ref()
+            .map(|_| tokio::time::interval(self.config.merge_window_timeout / 2))
+    }
+
+    /// Ticks the interval or pends forever if None.
+    async fn tick_or_pend(
+        interval: &mut std::pin::Pin<&mut Option<tokio::time::Interval>>,
+    ) -> tokio::time::Instant {
+        if let Some(ref mut int) = interval.as_mut().as_pin_mut() {
+            int.tick().await
+        } else {
+            std::future::pending().await
+        }
+    }
+
+    /// Handles a router command. Returns true if the router should stop.
+    async fn handle_command(
+        &self,
+        cmd: RouterCommand,
+        chunk_rx: &mut mpsc::Receiver<AudioChunk>,
+    ) -> bool {
+        match cmd {
+            RouterCommand::Stop => {
+                self.drain_and_finalize(chunk_rx).await;
+                true
+            }
+        }
+    }
+
+    /// Drains remaining chunks and finalizes merge windows during shutdown.
+    async fn drain_and_finalize(&self, chunk_rx: &mut mpsc::Receiver<AudioChunk>) {
+        self.check_merge_timeouts().await;
+        while let Ok(chunk) = chunk_rx.try_recv() {
+            self.write_chunk(&chunk).await;
+        }
     }
 }
 
