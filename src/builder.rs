@@ -13,6 +13,23 @@ use crate::{
     event_callback, EventCallback, FormatPreset, StreamAudioError, StreamConfig, StreamEvent,
 };
 
+/// Specifies which audio input device to use.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum DeviceSelection {
+    /// Use the system's default input device.
+    #[default]
+    SystemDefault,
+    /// Use a specific device by name.
+    ByName(String),
+}
+
+/// Resolved audio configuration after opening the device.
+struct ResolvedAudioConfig {
+    device: AudioDevice,
+    sample_rate: u32,
+    channels: u16,
+}
+
 /// Builder for configuring and starting audio capture.
 ///
 /// Use [`StreamAudio::builder()`] to create a new builder.
@@ -36,7 +53,7 @@ use crate::{
 /// [`StreamAudio::builder()`]: crate::StreamAudio::builder
 #[must_use]
 pub struct StreamAudioBuilder {
-    device_name: Option<String>,
+    device: DeviceSelection,
     format: FormatPreset,
     sinks: Vec<Arc<dyn Sink>>,
     event_callback: Option<EventCallback>,
@@ -53,7 +70,7 @@ impl StreamAudioBuilder {
     /// Creates a new builder with default settings.
     pub fn new() -> Self {
         Self {
-            device_name: None,
+            device: DeviceSelection::default(),
             format: FormatPreset::default(),
             sinks: Vec::new(),
             event_callback: None,
@@ -61,11 +78,11 @@ impl StreamAudioBuilder {
         }
     }
 
-    /// Use the default input device.
+    /// Use the system's default input device.
     ///
     /// This is the default behavior if no device is specified.
     pub fn device_default(mut self) -> Self {
-        self.device_name = None;
+        self.device = DeviceSelection::SystemDefault;
         self
     }
 
@@ -73,7 +90,7 @@ impl StreamAudioBuilder {
     ///
     /// Use [`list_input_devices()`](crate::list_input_devices) to get available device names.
     pub fn device(mut self, name: impl Into<String>) -> Self {
-        self.device_name = Some(name.into());
+        self.device = DeviceSelection::ByName(name.into());
         self
     }
 
@@ -110,6 +127,98 @@ impl StreamAudioBuilder {
         self
     }
 
+    /// Validates the builder configuration.
+    fn validate(&self) -> Result<(), StreamAudioError> {
+        if self.sinks.is_empty() {
+            return Err(StreamAudioError::NoSinksConfigured);
+        }
+        Ok(())
+    }
+
+    /// Opens the audio device and resolves the final audio parameters.
+    fn resolve_device(&self) -> Result<ResolvedAudioConfig, StreamAudioError> {
+        let device = match &self.device {
+            DeviceSelection::SystemDefault => AudioDevice::open_default()?,
+            DeviceSelection::ByName(name) => AudioDevice::open_by_name(name)?,
+        };
+
+        let device_config = device.config();
+        let sample_rate = self
+            .format
+            .sample_rate()
+            .unwrap_or(device_config.sample_rate);
+        let channels = self.format.channels().unwrap_or(device_config.channels);
+
+        Ok(ResolvedAudioConfig {
+            device,
+            sample_rate,
+            channels,
+        })
+    }
+
+    /// Creates and starts the router with all configured sinks.
+    async fn start_router(
+        &self,
+        chunk_rx: mpsc::Receiver<crate::AudioChunk>,
+        cmd_rx: mpsc::Receiver<crate::pipeline::RouterCommand>,
+    ) -> Result<tokio::task::JoinHandle<()>, StreamAudioError> {
+        let mut router = Router::new(self.sinks.clone(), self.config.clone());
+        if let Some(callback) = self.event_callback.clone() {
+            router = router.with_event_callback(callback);
+        }
+
+        router.start_sinks().await?;
+
+        let handle = tokio::spawn(async move {
+            router.run(chunk_rx, cmd_rx).await;
+        });
+
+        Ok(handle)
+    }
+
+    /// Spawns the capture bridge task that reads from the ring buffer and sends chunks.
+    fn spawn_capture_bridge(
+        &self,
+        audio_config: &ResolvedAudioConfig,
+        ring_consumer: ringbuf::HeapCons<i16>,
+        chunk_tx: mpsc::Sender<crate::AudioChunk>,
+        state: Arc<SessionState>,
+    ) -> tokio::task::JoinHandle<()> {
+        let mut audio_buffer = AudioBuffer::new(
+            ring_consumer,
+            audio_config.sample_rate,
+            audio_config.channels,
+            self.config.chunk_duration,
+        );
+
+        let chunk_duration = self.config.chunk_duration;
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(chunk_duration / 2);
+
+            while state.running.load(Ordering::SeqCst) {
+                interval.tick().await;
+
+                while audio_buffer.has_chunk() {
+                    if let Some(chunk) = audio_buffer.try_read_chunk() {
+                        state
+                            .samples_captured
+                            .fetch_add(chunk.samples.len() as u64, Ordering::SeqCst);
+                        state.chunks_processed.fetch_add(1, Ordering::SeqCst);
+
+                        if chunk_tx.send(chunk).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            for chunk in audio_buffer.drain() {
+                let _ = chunk_tx.send(chunk).await;
+            }
+        })
+    }
+
     /// Start audio capture.
     ///
     /// Returns a [`Session`] handle to control the capture.
@@ -121,89 +230,18 @@ impl StreamAudioBuilder {
     /// - The audio device cannot be opened
     /// - Any sink fails to start
     pub async fn start(self) -> Result<Session, StreamAudioError> {
-        // Validate configuration
-        if self.sinks.is_empty() {
-            return Err(StreamAudioError::NoSinksConfigured);
-        }
+        self.validate()?;
+        let audio_config = self.resolve_device()?;
 
-        // Open audio device
-        let device = match &self.device_name {
-            Some(name) => AudioDevice::open_by_name(name)?,
-            None => AudioDevice::open_default()?,
-        };
-
-        // Get device config
-        let device_config = device.config();
-        let sample_rate = self
-            .format
-            .sample_rate()
-            .unwrap_or(device_config.sample_rate);
-        let channels = self.format.channels().unwrap_or(device_config.channels);
-
-        // Create channels for communication
         let (chunk_tx, chunk_rx) = mpsc::channel(100);
         let (router_cmd_tx, router_cmd_rx) = mpsc::channel(1);
 
-        // Create shared state
         let state = Arc::new(SessionState::new());
-        let state_capture = Arc::clone(&state);
 
-        // Create and start router
-        let mut router = Router::new(self.sinks.clone(), self.config.clone());
-        if let Some(callback) = self.event_callback.clone() {
-            router = router.with_event_callback(callback);
-        }
-
-        // Start sinks
-        router.start_sinks().await?;
-
-        // Spawn router task
-        let router_handle = tokio::spawn(async move {
-            router.run(chunk_rx, router_cmd_rx).await;
-        });
-
-        // Start CPAL capture - returns the ring buffer consumer
-        let (capture_stream, ring_consumer) = device.start_capture()?;
-
-        // Wrap the consumer in an AudioBuffer for chunk-based reading
-        let mut audio_buffer = AudioBuffer::new(
-            ring_consumer,
-            sample_rate,
-            channels,
-            self.config.chunk_duration,
-        );
-
-        // Spawn capture -> router bridge task
-        let chunk_duration = self.config.chunk_duration;
-        let capture_handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(chunk_duration / 2);
-
-            while state_capture.running.load(Ordering::SeqCst) {
-                interval.tick().await;
-
-                // Read from ring buffer consumer and create chunks
-                while audio_buffer.has_chunk() {
-                    if let Some(chunk) = audio_buffer.try_read_chunk() {
-                        state_capture
-                            .samples_captured
-                            .fetch_add(chunk.samples.len() as u64, Ordering::SeqCst);
-                        state_capture
-                            .chunks_processed
-                            .fetch_add(1, Ordering::SeqCst);
-
-                        if chunk_tx.send(chunk).await.is_err() {
-                            // Router closed, stop capture
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Drain remaining audio
-            for chunk in audio_buffer.drain() {
-                let _ = chunk_tx.send(chunk).await;
-            }
-        });
+        let router_handle = self.start_router(chunk_rx, router_cmd_rx).await?;
+        let (capture_stream, ring_consumer) = audio_config.device.start_capture()?;
+        let capture_handle =
+            self.spawn_capture_bridge(&audio_config, ring_consumer, chunk_tx, Arc::clone(&state));
 
         Ok(Session::new(
             state,
@@ -234,14 +272,25 @@ mod tests {
     #[test]
     fn test_builder_default() {
         let builder = StreamAudioBuilder::new();
-        assert!(builder.device_name.is_none());
+        assert_eq!(builder.device, DeviceSelection::SystemDefault);
         assert!(builder.sinks.is_empty());
     }
 
     #[test]
     fn test_builder_device() {
         let builder = StreamAudio::builder().device("My Microphone");
-        assert_eq!(builder.device_name, Some("My Microphone".to_string()));
+        assert_eq!(
+            builder.device,
+            DeviceSelection::ByName("My Microphone".to_string())
+        );
+    }
+
+    #[test]
+    fn test_builder_device_default() {
+        let builder = StreamAudio::builder()
+            .device("Some Device")
+            .device_default();
+        assert_eq!(builder.device, DeviceSelection::SystemDefault);
     }
 
     #[test]
