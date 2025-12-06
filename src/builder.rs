@@ -60,15 +60,16 @@ struct ResolvedAudioConfig {
 ///
 /// Use [`StreamAudio::builder()`] to create a new builder.
 ///
-/// # Single-Source Example (v0.1 compatible)
+/// # Single-Source Example
 ///
 /// ```ignore
-/// use stream_audio::{StreamAudio, FileSink, ChannelSink, FormatPreset};
+/// use stream_audio::{StreamAudio, AudioSource, FileSink, ChannelSink, FormatPreset};
 /// use tokio::sync::mpsc;
 ///
 /// let (tx, rx) = mpsc::channel(100);
 ///
 /// let session = StreamAudio::builder()
+///     .add_source("default", AudioSource::default_device())
 ///     .format(FormatPreset::Transcription)
 ///     .add_sink(FileSink::wav("output.wav"))
 ///     .add_sink(ChannelSink::new(tx))
@@ -76,7 +77,7 @@ struct ResolvedAudioConfig {
 ///     .await?;
 /// ```
 ///
-/// # Multi-Source Example (v0.2)
+/// # Multi-Source Example
 ///
 /// ```ignore
 /// use stream_audio::{StreamAudio, AudioSource, FileSink, ChannelSink, FormatPreset};
@@ -95,9 +96,7 @@ struct ResolvedAudioConfig {
 /// [`StreamAudio::builder()`]: crate::StreamAudio::builder
 #[must_use]
 pub struct StreamAudioBuilder {
-    /// Single-source device (backward compatibility).
-    device: DeviceSelection,
-    /// Multi-source configurations: `(source_id, source_config)` pairs.
+    /// Source configurations: `(source_id, source_config)` pairs.
     sources: Vec<(SourceId, AudioSource)>,
     /// Format preset for all sources.
     format: FormatPreset,
@@ -121,7 +120,6 @@ impl StreamAudioBuilder {
     /// Creates a new builder with default settings.
     pub fn new() -> Self {
         Self {
-            device: DeviceSelection::default(),
             sources: Vec::new(),
             format: FormatPreset::default(),
             sinks: Vec::new(),
@@ -129,26 +127,6 @@ impl StreamAudioBuilder {
             event_callback: None,
             config: StreamConfig::default(),
         }
-    }
-
-    // ========== Single-Source API (v0.1 compatible) ==========
-
-    /// Use the system's default input device.
-    ///
-    /// This is the default behavior if no device is specified.
-    /// For multi-source capture, use [`add_source()`](Self::add_source) instead.
-    pub fn device_default(mut self) -> Self {
-        self.device = DeviceSelection::SystemDefault;
-        self
-    }
-
-    /// Use a specific input device by name.
-    ///
-    /// Use [`list_input_devices()`](crate::list_input_devices) to get available device names.
-    /// For multi-source capture, use [`add_source()`](Self::add_source) instead.
-    pub fn device(mut self, name: impl Into<String>) -> Self {
-        self.device = DeviceSelection::ByName(name.into());
-        self
     }
 
     /// Set the audio format preset.
@@ -159,10 +137,7 @@ impl StreamAudioBuilder {
         self
     }
 
-    /// Add a sink to receive audio data.
-    ///
-    /// In single-source mode, the sink receives all audio.
-    /// In multi-source mode with no routing specified, the sink receives from all sources.
+    /// Add a sink to receive audio from all sources.
     ///
     /// For routing to specific sources, use [`add_sink_from()`](Self::add_sink_from)
     /// or [`add_sink_merged()`](Self::add_sink_merged).
@@ -171,8 +146,6 @@ impl StreamAudioBuilder {
         self.sink_routes.push(SinkRoute::All);
         self
     }
-
-    // ========== Multi-Source API (v0.2) ==========
 
     /// Add an audio source with an identifier.
     ///
@@ -234,11 +207,6 @@ impl StreamAudioBuilder {
         self
     }
 
-    /// Returns true if this is a multi-source configuration.
-    pub fn is_multi_source(&self) -> bool {
-        !self.sources.is_empty()
-    }
-
     /// Returns the configured source IDs.
     pub fn source_ids(&self) -> Vec<SourceId> {
         self.sources.iter().map(|(id, _)| id.clone()).collect()
@@ -263,60 +231,20 @@ impl StreamAudioBuilder {
 
     /// Validates the builder configuration.
     fn validate(&self) -> Result<(), StreamAudioError> {
+        if self.sources.is_empty() {
+            return Err(StreamAudioError::NoSourcesConfigured);
+        }
         if self.sinks.is_empty() {
             return Err(StreamAudioError::NoSinksConfigured);
         }
         Ok(())
     }
 
-    /// Opens the audio device and resolves the final audio parameters.
-    fn resolve_device(&self) -> Result<ResolvedAudioConfig, StreamAudioError> {
-        let device = match &self.device {
-            DeviceSelection::SystemDefault => AudioDevice::open_default()?,
-            DeviceSelection::ByName(name) => AudioDevice::open_by_name(name)?,
-        };
-
-        // Query the device's actual native format
-        let (device_sample_rate, device_channels) = device.native_config()?;
-
-        // Determine target format from preset (or use device native if Native preset)
-        let target_sample_rate = self.format.sample_rate().unwrap_or(device_sample_rate);
-        let target_channels = self.format.channels().unwrap_or(device_channels);
-
-        Ok(ResolvedAudioConfig {
-            device,
-            target_sample_rate,
-            target_channels,
-            device_sample_rate,
-            device_channels,
-        })
-    }
-
-    /// Creates and starts the router with all configured sinks.
-    async fn start_router(
-        &self,
-        chunk_rx: mpsc::Receiver<crate::AudioChunk>,
-        cmd_rx: mpsc::Receiver<crate::pipeline::RouterCommand>,
-    ) -> Result<tokio::task::JoinHandle<()>, StreamAudioError> {
-        let mut router = Router::new(self.sinks.clone(), self.config.clone());
-        if let Some(callback) = self.event_callback.clone() {
-            router = router.with_event_callback(callback);
-        }
-
-        router.start_sinks().await?;
-
-        let handle = tokio::spawn(async move {
-            router.run(chunk_rx, cmd_rx).await;
-        });
-
-        Ok(handle)
-    }
-
     /// Creates the capture configuration from resolved audio parameters.
     fn create_capture_config(
         &self,
         audio_config: &ResolvedAudioConfig,
-        source_id: Option<SourceId>,
+        source_id: SourceId,
     ) -> CaptureConfig {
         CaptureConfig {
             device_sample_rate: audio_config.device_sample_rate,
@@ -324,7 +252,7 @@ impl StreamAudioBuilder {
             target_sample_rate: audio_config.target_sample_rate,
             target_channels: audio_config.target_channels,
             chunk_duration: self.config.chunk_duration,
-            source_id,
+            source_id: Some(source_id),
         }
     }
 
@@ -335,49 +263,12 @@ impl StreamAudioBuilder {
     /// # Errors
     ///
     /// Returns an error if:
+    /// - No sources are configured
     /// - No sinks are configured
     /// - The audio device cannot be opened
     /// - Any sink fails to start
     pub async fn start(self) -> Result<Session, StreamAudioError> {
         self.validate()?;
-
-        if self.is_multi_source() {
-            self.start_multi_source().await
-        } else {
-            self.start_single_source().await
-        }
-    }
-
-    /// Starts a single-source capture session (v0.1 compatible).
-    async fn start_single_source(self) -> Result<Session, StreamAudioError> {
-        let audio_config = self.resolve_device()?;
-
-        let (chunk_tx, chunk_rx) = mpsc::channel(100);
-        let (router_cmd_tx, router_cmd_rx) = mpsc::channel(1);
-
-        let state = Arc::new(SessionState::new());
-
-        let router_handle = self.start_router(chunk_rx, router_cmd_rx).await?;
-        let (capture_stream, ring_consumer) = audio_config.device.start_capture()?;
-
-        let capture_config = self.create_capture_config(&audio_config, None);
-        let capture_handle =
-            spawn_capture_bridge(ring_consumer, &capture_config, chunk_tx, Arc::clone(&state));
-
-        Ok(Session::new(
-            state,
-            router_cmd_tx,
-            router_handle,
-            capture_handle,
-            capture_stream,
-        ))
-    }
-
-    /// Starts a multi-source capture session.
-    async fn start_multi_source(self) -> Result<Session, StreamAudioError> {
-        if self.sources.is_empty() {
-            return Err(StreamAudioError::NoSourcesConfigured);
-        }
 
         let (chunk_tx, chunk_rx) = mpsc::channel(100);
         let (router_cmd_tx, router_cmd_rx) = mpsc::channel(1);
@@ -417,7 +308,7 @@ impl StreamAudioBuilder {
             let audio_config = self.resolve_source_device(source)?;
             let (capture_stream, ring_consumer) = audio_config.device.start_capture()?;
 
-            let capture_config = self.create_capture_config(&audio_config, Some(source_id.clone()));
+            let capture_config = self.create_capture_config(&audio_config, source_id.clone());
             let capture_handle = spawn_capture_bridge(
                 ring_consumer,
                 &capture_config,
@@ -481,25 +372,8 @@ mod tests {
     #[test]
     fn test_builder_default() {
         let builder = StreamAudioBuilder::new();
-        assert_eq!(builder.device, DeviceSelection::SystemDefault);
+        assert!(builder.sources.is_empty());
         assert!(builder.sinks.is_empty());
-    }
-
-    #[test]
-    fn test_builder_device() {
-        let builder = StreamAudio::builder().device("My Microphone");
-        assert_eq!(
-            builder.device,
-            DeviceSelection::ByName("My Microphone".to_string())
-        );
-    }
-
-    #[test]
-    fn test_builder_device_default() {
-        let builder = StreamAudio::builder()
-            .device("Some Device")
-            .device_default();
-        assert_eq!(builder.device, DeviceSelection::SystemDefault);
     }
 
     #[test]
@@ -514,7 +388,6 @@ mod tests {
             .add_source("mic", AudioSource::device("Microphone"))
             .add_source("speaker", AudioSource::device("BlackHole"));
 
-        assert!(builder.is_multi_source());
         assert_eq!(builder.sources.len(), 2);
         assert_eq!(builder.source_ids().len(), 2);
     }
@@ -537,13 +410,11 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_backward_compat() {
-        // v0.1 style API should still work
+    fn test_builder_broadcast_sink() {
         let builder = StreamAudio::builder()
-            .device("Microphone")
+            .add_source("default", AudioSource::default_device())
             .add_sink(crate::sink::ChannelSink::new(mpsc::channel(1).0));
 
-        assert!(!builder.is_multi_source());
         assert_eq!(builder.sinks.len(), 1);
         assert!(matches!(&builder.sink_routes[0], SinkRoute::All));
     }

@@ -5,7 +5,7 @@
 //! Run with: cargo run --example simple
 
 use std::time::Duration;
-use stream_audio::{FileSink, FormatPreset, StreamAudio};
+use stream_audio::{AudioSource, FileSink, FormatPreset, StreamAudio};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start recording with minimal configuration
     let session = StreamAudio::builder()
+        .add_source("default", AudioSource::default_device())
         .format(FormatPreset::Transcription) // 16kHz mono
         .add_sink(FileSink::wav("recording.wav"))
         .start()
