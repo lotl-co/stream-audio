@@ -2,7 +2,7 @@
 //!
 //! Records audio from the default input device to a WAV file.
 //!
-//! Run with: cargo run --example simple_record
+//! Run with: cargo run --example simple
 
 use std::time::Duration;
 use stream_audio::{FileSink, FormatPreset, StreamAudio};

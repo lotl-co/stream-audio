@@ -1,9 +1,9 @@
-//! Multi-source capture example.
+//! Multi-source/multi-sink capture example.
 //!
 //! Demonstrates capturing from multiple audio sources simultaneously
 //! with routing to different sinks.
 //!
-//! Run with: cargo run --example multi_source
+//! Run with: cargo run --example multi
 //!
 //! Note: This example requires two audio input devices to be available.
 //! If you only have one device, modify the example to use MockSource.
