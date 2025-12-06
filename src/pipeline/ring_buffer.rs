@@ -1,6 +1,6 @@
 //! Ring buffer wrapper for audio capture.
 
-use ringbuf::traits::{Consumer, Observer, Producer, Split};
+use ringbuf::traits::{Consumer, Observer, Split};
 use ringbuf::HeapRb;
 use std::time::Duration;
 
@@ -126,6 +126,7 @@ impl AudioBuffer {
 /// Creates a ring buffer pair for audio capture.
 ///
 /// Returns a producer (for the CPAL callback) and an `AudioBuffer` (for the router).
+#[allow(dead_code)] // Used in tests and may be useful for custom setups
 pub fn create_audio_buffer(
     capacity_duration: Duration,
     sample_rate: u32,
@@ -146,6 +147,7 @@ pub fn create_audio_buffer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ringbuf::traits::Producer;
 
     #[test]
     fn test_audio_buffer_read_chunk() {

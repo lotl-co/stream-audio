@@ -1,6 +1,6 @@
 //! Mock audio source for testing without hardware.
 
-use ringbuf::traits::{Consumer, Producer, Split};
+use ringbuf::traits::{Producer, Split};
 use ringbuf::HeapRb;
 use std::time::Duration;
 
@@ -139,6 +139,7 @@ impl MockSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ringbuf::traits::Consumer;
 
     #[test]
     fn test_mock_source_silence() {

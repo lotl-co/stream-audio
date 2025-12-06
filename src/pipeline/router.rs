@@ -1,7 +1,6 @@
 //! Router task that fans out audio to sinks.
 
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::sink::Sink;
@@ -149,6 +148,7 @@ mod tests {
     use crate::SinkError;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     struct TestSink {
         name: String,

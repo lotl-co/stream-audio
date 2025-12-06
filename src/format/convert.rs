@@ -34,11 +34,13 @@ pub fn stereo_to_mono(stereo: &[i16]) -> Vec<i16> {
 }
 
 /// Converts mono samples to stereo by duplicating each sample.
+#[allow(dead_code)] // Useful utility for future use
 pub fn mono_to_stereo(mono: &[i16]) -> Vec<i16> {
     mono.iter().flat_map(|&s| [s, s]).collect()
 }
 
 /// Batch converts f32 samples to i16.
+#[allow(dead_code)] // Useful utility for future use
 pub fn f32_slice_to_i16(samples: &[f32]) -> Vec<i16> {
     samples.iter().map(|&s| f32_to_i16(s)).collect()
 }
