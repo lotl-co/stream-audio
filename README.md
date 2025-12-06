@@ -1,5 +1,7 @@
 # stream-audio
 
+> **Note:** This crate is under active development. The API may change before 1.0.
+
 Real-time audio capture with multi-sink architecture.
 
 [![CI](https://github.com/lotl-co/stream-audio/actions/workflows/ci.yml/badge.svg)](https://github.com/lotl-co/stream-audio/actions/workflows/ci.yml)

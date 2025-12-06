@@ -1,5 +1,7 @@
 //! # stream-audio
 //!
+//! **Note:** This crate is under active development. The API may change before 1.0.
+//!
 //! Real-time audio capture with multi-sink architecture.
 //!
 //! `stream-audio` provides non-blocking audio capture via CPAL with multiple
