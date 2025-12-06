@@ -335,6 +335,13 @@ impl StreamAudioBuilder {
                 Arc::clone(&state),
             );
 
+            // Emit SourceStarted event
+            if let Some(ref callback) = self.event_callback {
+                callback(StreamEvent::SourceStarted {
+                    source_id: source_id.clone(),
+                });
+            }
+
             capture_handles.push(capture_handle);
             capture_streams.push(capture_stream);
         }
