@@ -35,3 +35,4 @@ tarpaulin-report.html
 # OS files
 Thumbs.db
 ._*
+/tmp
