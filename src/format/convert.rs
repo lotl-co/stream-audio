@@ -1,16 +1,32 @@
 //! Sample format and channel conversion.
 
+/// Maximum positive value for symmetric i16 scaling.
+///
+/// We use 32767 (not 32768) so that -1.0 and +1.0 map to values with equal magnitude.
+/// This is the standard convention for audio processing to avoid asymmetric clipping.
+const I16_MAX_SYMMETRIC: f32 = i16::MAX as f32; // 32767.0
+
+/// Full range divisor for i16 to f32 conversion.
+///
+/// Uses 32768 to map the full i16 range [-32768, 32767] to approximately [-1.0, 1.0].
+const I16_RANGE: f32 = 32768.0;
+
+/// Minimum i16 value as f32 for clamping.
+const I16_MIN_F32: f32 = i16::MIN as f32; // -32768.0
+
+/// Maximum i16 value as f32 for clamping.
+const I16_MAX_F32: f32 = i16::MAX as f32; // 32767.0
+
 /// Converts f32 samples to i16.
 ///
 /// Input should be in the range [-1.0, 1.0].
 /// Values outside this range are clamped.
 ///
-/// Uses × 32767 (not 32768) for symmetric scaling. This means -1.0 maps
-/// to -32767 rather than -32768, losing 1 LSB at the negative extreme.
-/// This is a common convention that avoids producing out-of-range values.
+/// Uses symmetric scaling so -1.0 maps to -32767 rather than -32768,
+/// losing 1 LSB at the negative extreme. This avoids asymmetric clipping.
 #[inline]
 pub fn f32_to_i16(sample: f32) -> i16 {
-    (sample * 32767.0).clamp(-32768.0, 32767.0) as i16
+    (sample * I16_MAX_SYMMETRIC).clamp(I16_MIN_F32, I16_MAX_F32) as i16
 }
 
 /// Converts i16 samples to f32.
@@ -18,7 +34,7 @@ pub fn f32_to_i16(sample: f32) -> i16 {
 /// Output will be in the range [-1.0, 1.0].
 #[inline]
 pub fn i16_to_f32(sample: i16) -> f32 {
-    f32::from(sample) / 32768.0
+    f32::from(sample) / I16_RANGE
 }
 
 /// Converts stereo samples to mono by averaging channels.

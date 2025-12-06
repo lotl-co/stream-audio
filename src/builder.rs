@@ -1,18 +1,15 @@
 //! Builder pattern for `StreamAudio`.
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::format::FormatConverter;
-use crate::pipeline::{AudioBuffer, Router};
+use crate::pipeline::{spawn_capture_bridge, CaptureConfig, Router};
 use crate::session::{Session, SessionState};
 use crate::sink::Sink;
 use crate::source::AudioDevice;
 use crate::{
-    event_callback, AudioChunk, EventCallback, FormatPreset, StreamAudioError, StreamConfig,
-    StreamEvent,
+    event_callback, EventCallback, FormatPreset, StreamAudioError, StreamConfig, StreamEvent,
 };
 
 /// Specifies which audio input device to use.
@@ -184,86 +181,15 @@ impl StreamAudioBuilder {
         Ok(handle)
     }
 
-    /// Spawns the capture bridge task that reads from the ring buffer and sends chunks.
-    ///
-    /// This task:
-    /// 1. Reads device-native audio from the ring buffer
-    /// 2. Converts to target format (resampling + channel conversion)
-    /// 3. Sends converted chunks to the router
-    fn spawn_capture_bridge(
-        &self,
-        audio_config: &ResolvedAudioConfig,
-        ring_consumer: ringbuf::HeapCons<i16>,
-        chunk_tx: mpsc::Sender<AudioChunk>,
-        state: Arc<SessionState>,
-    ) -> tokio::task::JoinHandle<()> {
-        // AudioBuffer reads at device-native format
-        let mut audio_buffer = AudioBuffer::new(
-            ring_consumer,
-            audio_config.device_sample_rate,
-            audio_config.device_channels,
-            self.config.chunk_duration,
-        );
-
-        // FormatConverter transforms device format → target format
-        let converter = FormatConverter::new(
-            audio_config.device_sample_rate,
-            audio_config.device_channels,
-            audio_config.target_sample_rate,
-            audio_config.target_channels,
-        );
-
-        let target_rate = audio_config.target_sample_rate;
-        let target_channels = audio_config.target_channels;
-        let chunk_duration = self.config.chunk_duration;
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(chunk_duration / 2);
-            let mut output_timestamp = std::time::Duration::ZERO;
-
-            while state.running.load(Ordering::SeqCst) {
-                interval.tick().await;
-
-                while audio_buffer.has_chunk() {
-                    if let Some(device_chunk) = audio_buffer.try_read_chunk() {
-                        // Convert from device format to target format
-                        let converted_samples = converter.convert(&device_chunk.samples);
-
-                        let chunk = AudioChunk::new(
-                            converted_samples,
-                            output_timestamp,
-                            target_rate,
-                            target_channels,
-                        );
-
-                        // Track timestamp in target format
-                        output_timestamp += chunk.duration();
-
-                        state
-                            .samples_captured
-                            .fetch_add(chunk.samples.len() as u64, Ordering::SeqCst);
-                        state.chunks_processed.fetch_add(1, Ordering::SeqCst);
-
-                        if chunk_tx.send(chunk).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Drain remaining audio
-            for device_chunk in audio_buffer.drain() {
-                let converted_samples = converter.convert(&device_chunk.samples);
-                let chunk = AudioChunk::new(
-                    converted_samples,
-                    output_timestamp,
-                    target_rate,
-                    target_channels,
-                );
-                output_timestamp += chunk.duration();
-                let _ = chunk_tx.send(chunk).await;
-            }
-        })
+    /// Creates the capture configuration from resolved audio parameters.
+    fn create_capture_config(&self, audio_config: &ResolvedAudioConfig) -> CaptureConfig {
+        CaptureConfig {
+            device_sample_rate: audio_config.device_sample_rate,
+            device_channels: audio_config.device_channels,
+            target_sample_rate: audio_config.target_sample_rate,
+            target_channels: audio_config.target_channels,
+            chunk_duration: self.config.chunk_duration,
+        }
     }
 
     /// Start audio capture.
@@ -287,8 +213,10 @@ impl StreamAudioBuilder {
 
         let router_handle = self.start_router(chunk_rx, router_cmd_rx).await?;
         let (capture_stream, ring_consumer) = audio_config.device.start_capture()?;
+
+        let capture_config = self.create_capture_config(&audio_config);
         let capture_handle =
-            self.spawn_capture_bridge(&audio_config, ring_consumer, chunk_tx, Arc::clone(&state));
+            spawn_capture_bridge(ring_consumer, &capture_config, chunk_tx, Arc::clone(&state));
 
         Ok(Session::new(
             state,

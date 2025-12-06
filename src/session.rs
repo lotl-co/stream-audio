@@ -2,12 +2,16 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::pipeline::RouterCommand;
 use crate::source::CaptureStream;
 use crate::StreamAudioError;
+
+/// Default timeout for graceful shutdown operations.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Statistics about a recording session.
 #[derive(Debug, Clone, Default)]
@@ -131,29 +135,81 @@ impl Session {
             return Ok(());
         }
 
-        // Send stop command to router
-        let _ = self.router_cmd_tx.send(RouterCommand::Stop).await;
+        // Send stop command to router (don't wait forever if channel is full)
+        let _ = tokio::time::timeout(
+            Duration::from_millis(100),
+            self.router_cmd_tx.send(RouterCommand::Stop),
+        )
+        .await;
 
-        // Wait for capture task to finish
+        // Wait for capture task with timeout
         if let Some(handle) = self.capture_handle.take() {
-            let _ = handle.await;
+            if tokio::time::timeout(SHUTDOWN_TIMEOUT, handle)
+                .await
+                .is_err()
+            {
+                tracing::warn!("Capture task did not complete within timeout");
+            }
         }
 
-        // Wait for router task to finish
+        // Wait for router task with timeout
         if let Some(handle) = self.router_handle.take() {
-            let _ = handle.await;
+            if tokio::time::timeout(SHUTDOWN_TIMEOUT, handle)
+                .await
+                .is_err()
+            {
+                tracing::warn!("Router task did not complete within timeout");
+            }
         }
 
         Ok(())
+    }
+
+    /// Spawns a background task to clean up resources.
+    ///
+    /// This is used when the Session is dropped without explicit `stop()`.
+    /// The cleanup runs in a detached task so Drop doesn't block.
+    fn spawn_cleanup(&mut self) {
+        // Signal stop
+        self.state.running.store(false, Ordering::SeqCst);
+
+        // Try to send stop command (non-blocking)
+        let _ = self.router_cmd_tx.try_send(RouterCommand::Stop);
+
+        // Take the handles so the tasks can be cleaned up in background
+        let capture_handle = self.capture_handle.take();
+        let router_handle = self.router_handle.take();
+
+        // Spawn a detached cleanup task
+        tokio::spawn(async move {
+            // Wait briefly for tasks to finish
+            if let Some(handle) = capture_handle {
+                if tokio::time::timeout(SHUTDOWN_TIMEOUT, handle)
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!("Capture task did not complete on drop");
+                }
+            }
+
+            if let Some(handle) = router_handle {
+                if tokio::time::timeout(SHUTDOWN_TIMEOUT, handle)
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!("Router task did not complete on drop");
+                }
+            }
+        });
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
         if self.state.running.load(Ordering::SeqCst) {
-            // Session dropped without explicit stop() - trigger background cleanup
-            self.state.running.store(false, Ordering::SeqCst);
-            let _ = self.router_cmd_tx.try_send(RouterCommand::Stop);
+            // Session dropped without explicit stop() - spawn background cleanup
+            // This prevents blocking in Drop while still ensuring cleanup happens
+            self.spawn_cleanup();
         }
     }
 }

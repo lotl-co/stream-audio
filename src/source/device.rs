@@ -4,10 +4,15 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat, Stream, StreamConfig as CpalStreamConfig};
 use ringbuf::traits::{Producer, Split};
 use ringbuf::HeapRb;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use crate::StreamAudioError;
+
+/// Symmetric i16 max for audio conversion (avoids asymmetric clipping).
+const I16_MAX_SYMMETRIC: f32 = i16::MAX as f32;
+/// Minimum i16 as f32 for clamping.
+const I16_MIN_F32: f32 = i16::MIN as f32;
+/// Maximum i16 as f32 for clamping.
+const I16_MAX_F32: f32 = i16::MAX as f32;
 
 /// Configuration for audio capture.
 #[derive(Debug, Clone)]
@@ -128,8 +133,6 @@ impl AudioDevice {
         let ring_buffer = HeapRb::<i16>::new(self.config.buffer_capacity);
         let (producer, consumer) = ring_buffer.split();
 
-        let running = Arc::new(AtomicBool::new(true));
-
         // Get supported config
         let supported_config = self
             .device
@@ -154,13 +157,7 @@ impl AudioDevice {
             .play()
             .map_err(|e| StreamAudioError::BackendError(e.to_string()))?;
 
-        Ok((
-            CaptureStream {
-                _stream: stream,
-                running,
-            },
-            consumer,
-        ))
+        Ok((CaptureStream { _stream: stream }, consumer))
     }
 
     fn build_i16_stream(
@@ -196,9 +193,10 @@ impl AudioDevice {
             .build_input_stream(
                 config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    // Inline conversion (not using format::f32_to_i16) to avoid function call overhead in audio callback
+                    // Inline conversion to avoid function call overhead in audio callback
                     for &sample in data {
-                        let converted = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
+                        let converted =
+                            (sample * I16_MAX_SYMMETRIC).clamp(I16_MIN_F32, I16_MAX_F32) as i16;
                         let _ = producer.try_push(converted);
                     }
                 },
@@ -215,29 +213,17 @@ impl AudioDevice {
 
 /// A running audio capture stream.
 ///
-/// Audio capture stops when this is dropped.
+/// Audio capture continues while this struct is held. When dropped, the CPAL
+/// stream is automatically stopped and resources are released.
+///
+/// This is a simple RAII wrapper - the stream runs while this exists.
 pub struct CaptureStream {
+    /// The underlying CPAL stream. Dropping this stops capture.
     _stream: Stream,
-    running: Arc<AtomicBool>,
 }
 
-impl CaptureStream {
-    /// Returns true if the stream is still running.
-    pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
-    }
-
-    /// Stops the capture stream.
-    pub fn stop(&self) {
-        self.running.store(false, Ordering::SeqCst);
-    }
-}
-
-impl Drop for CaptureStream {
-    fn drop(&mut self) {
-        self.running.store(false, Ordering::SeqCst);
-    }
-}
+// CaptureStream uses RAII - stream runs while it exists, stops when dropped.
+// No explicit stop() needed; the CPAL stream handles cleanup on drop.
 
 #[cfg(test)]
 mod tests {

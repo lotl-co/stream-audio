@@ -3,14 +3,19 @@
 //! The pipeline connects the audio source to sinks via a ring buffer:
 //!
 //! ```text
-//! CPAL Thread → Ring Buffer → Router Task → Sinks
+//! CPAL Thread → Ring Buffer → Capture Bridge → Router Task → Sinks
 //! ```
 //!
-//! The ring buffer absorbs pressure from slow sinks, ensuring the
-//! CPAL callback never blocks.
+//! - **Ring Buffer**: Lock-free SPSC queue absorbs pressure from slow sinks
+//! - **Capture Bridge**: Reads from buffer, converts format, forwards to router
+//! - **Router**: Fans out chunks to all registered sinks with retry logic
+//!
+//! The ring buffer ensures the CPAL callback never blocks.
 
+mod capture;
 mod ring_buffer;
 mod router;
 
+pub(crate) use capture::{spawn_capture_bridge, CaptureConfig};
 pub(crate) use ring_buffer::AudioBuffer;
 pub(crate) use router::{Router, RouterCommand};

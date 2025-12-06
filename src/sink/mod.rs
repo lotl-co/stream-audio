@@ -6,8 +6,35 @@
 //! - [`ChannelSink`]: Sends chunks to a tokio mpsc channel
 //! - [`FileSink`]: Writes chunks to a WAV file
 //!
-//! You can implement the [`Sink`] trait for custom destinations like
-//! network endpoints or audio processors.
+//! # Implementing Custom Sinks
+//!
+//! The [`Sink`] trait has sensible defaults - you only need to implement
+//! two methods:
+//!
+//! - `name()` - A human-readable identifier for logging
+//! - `write()` - The core method that receives audio chunks
+//!
+//! The lifecycle hooks (`on_start`, `on_stop`) have default no-op implementations.
+//! Only override them if your sink needs setup/teardown logic.
+//!
+//! ## Minimal Example
+//!
+//! ```
+//! use stream_audio::{Sink, AudioChunk, SinkError};
+//! use async_trait::async_trait;
+//!
+//! struct MinimalSink;
+//!
+//! #[async_trait]
+//! impl Sink for MinimalSink {
+//!     fn name(&self) -> &str { "minimal" }
+//!
+//!     async fn write(&self, chunk: &AudioChunk) -> Result<(), SinkError> {
+//!         println!("Got {} samples", chunk.samples.len());
+//!         Ok(())
+//!     }
+//! }
+//! ```
 
 mod channel;
 mod file;
