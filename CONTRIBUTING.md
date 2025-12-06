@@ -7,7 +7,15 @@ Thank you for your interest in contributing to `stream-audio`! This document out
 ### Prerequisites
 
 - Rust 1.75 or later
+- [just](https://github.com/casey/just) command runner
 - An audio input device (for manual testing)
+
+```bash
+# Install just
+cargo install just
+# or: brew install just
+# or: apt install just
+```
 
 ### Setup
 
@@ -15,7 +23,7 @@ Thank you for your interest in contributing to `stream-audio`! This document out
 git clone https://github.com/lotl-co/stream-audio.git
 cd stream-audio
 cargo build
-cargo test
+just check  # Run all checks
 ```
 
 ## Development Practices
@@ -70,18 +78,14 @@ Use the domain language consistently:
 Before submitting a PR, ensure all checks pass:
 
 ```bash
-# Format code
-cargo fmt
-
-# Run lints (must pass with no warnings)
-cargo clippy
-
-# Run tests
-cargo test
-
-# Check documentation builds
-cargo doc --no-deps
+just check
 ```
+
+This runs:
+- `cargo fmt -- --check` - Format check
+- `cargo clippy -- -D warnings` - Lints (must pass with no warnings)
+- `cargo test` - All tests
+- `cargo doc --no-deps` - Documentation builds
 
 ## Architecture Guidelines
 
@@ -126,17 +130,14 @@ let device = get_default_device()
 2. **Create a branch** from `main` with a descriptive name
 3. **Write tests first** (TDD)
 4. **Implement** your changes
-5. **Run all checks** (`fmt`, `clippy`, `test`, `doc`)
+5. **Run `just check`** to verify all checks pass
 6. **Submit PR** with a clear description
 
 ### PR Checklist
 
 - [ ] Tests added/updated
 - [ ] Documentation updated
-- [ ] `cargo fmt` passes
-- [ ] `cargo clippy` passes with no warnings
-- [ ] `cargo test` passes
-- [ ] `cargo doc` builds without warnings
+- [ ] `just check` passes
 
 ### Commit Messages
 
