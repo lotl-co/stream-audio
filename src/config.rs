@@ -81,6 +81,24 @@ pub struct StreamConfig {
     /// Uses exponential backoff (delay doubles each attempt).
     /// Default: 100ms
     pub sink_retry_delay: Duration,
+
+    /// Duration of merge windows for multi-source capture.
+    ///
+    /// When multiple sources are merged, chunks are aligned by timestamp
+    /// into windows of this duration. Should typically match `chunk_duration`.
+    /// Default: 100ms
+    pub merge_window_duration: Duration,
+
+    /// Timeout for incomplete merge windows.
+    ///
+    /// If a merge window doesn't receive chunks from all sources within
+    /// this duration, it will be emitted with available sources only
+    /// (missing sources filled with silence) and a [`StreamEvent::MergeIncomplete`]
+    /// event is emitted.
+    /// Default: 200ms
+    ///
+    /// [`StreamEvent::MergeIncomplete`]: crate::StreamEvent::MergeIncomplete
+    pub merge_window_timeout: Duration,
 }
 
 impl Default for StreamConfig {
@@ -90,6 +108,8 @@ impl Default for StreamConfig {
             ring_buffer_duration: Duration::from_secs(30),
             sink_retry_attempts: 3,
             sink_retry_delay: Duration::from_millis(100),
+            merge_window_duration: Duration::from_millis(100),
+            merge_window_timeout: Duration::from_millis(200),
         }
     }
 }
@@ -124,5 +144,7 @@ mod tests {
         assert_eq!(config.ring_buffer_duration, Duration::from_secs(30));
         assert_eq!(config.sink_retry_attempts, 3);
         assert_eq!(config.sink_retry_delay, Duration::from_millis(100));
+        assert_eq!(config.merge_window_duration, Duration::from_millis(100));
+        assert_eq!(config.merge_window_timeout, Duration::from_millis(200));
     }
 }

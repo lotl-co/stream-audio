@@ -34,6 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             StreamEvent::StreamInterrupted { reason } => {
                 eprintln!("Stream interrupted: {}", reason);
             }
+            // Multi-source events (not used in this single-source example)
+            _ => {}
         })
         .start()
         .await?;

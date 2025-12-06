@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+use crate::source::SourceId;
+
 /// Runtime events emitted during audio capture.
 ///
 /// These are informational events, not errors. The stream continues
@@ -27,6 +29,15 @@ use std::sync::Arc;
 ///         }
 ///         StreamEvent::StreamInterrupted { reason } => {
 ///             eprintln!("Stream interrupted: {}", reason);
+///         }
+///         StreamEvent::SourceStarted { source_id } => {
+///             eprintln!("Source started: {}", source_id);
+///         }
+///         StreamEvent::SourceStopped { source_id, reason } => {
+///             eprintln!("Source {} stopped: {}", source_id, reason);
+///         }
+///         StreamEvent::MergeIncomplete { window_id, missing } => {
+///             eprintln!("Merge window {} incomplete, missing: {:?}", window_id, missing);
 ///         }
 ///     }
 /// }
@@ -61,6 +72,34 @@ pub enum StreamEvent {
     StreamInterrupted {
         /// Description of why the stream was interrupted.
         reason: String,
+    },
+
+    /// A source started producing audio (multi-source mode).
+    SourceStarted {
+        /// ID of the source that started.
+        source_id: SourceId,
+    },
+
+    /// A source stopped producing audio (multi-source mode).
+    ///
+    /// This can happen due to device disconnection, errors, or explicit stop.
+    SourceStopped {
+        /// ID of the source that stopped.
+        source_id: SourceId,
+        /// Why the source stopped.
+        reason: String,
+    },
+
+    /// A merge window was emitted with missing sources.
+    ///
+    /// This happens when the merge timeout expires before all sources
+    /// have contributed to a time window. Missing sources are filled
+    /// with silence.
+    MergeIncomplete {
+        /// The window ID that was incomplete.
+        window_id: u64,
+        /// Sources that didn't contribute to this window.
+        missing: Vec<SourceId>,
     },
 }
 
