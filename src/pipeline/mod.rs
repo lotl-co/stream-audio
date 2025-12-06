@@ -12,8 +12,5 @@
 mod ring_buffer;
 mod router;
 
-// These exports will be used by the builder/session modules
-#[allow(unused_imports)]
-pub(crate) use ring_buffer::{create_audio_buffer, AudioBuffer};
-#[allow(unused_imports)]
+pub(crate) use ring_buffer::AudioBuffer;
 pub(crate) use router::{Router, RouterCommand};

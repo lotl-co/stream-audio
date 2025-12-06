@@ -4,6 +4,10 @@
 ///
 /// Input should be in the range [-1.0, 1.0].
 /// Values outside this range are clamped.
+///
+/// Uses × 32767 (not 32768) for symmetric scaling. This means -1.0 maps
+/// to -32767 rather than -32768, losing 1 LSB at the negative extreme.
+/// This is a common convention that avoids producing out-of-range values.
 #[inline]
 pub fn f32_to_i16(sample: f32) -> i16 {
     (sample * 32767.0).clamp(-32768.0, 32767.0) as i16

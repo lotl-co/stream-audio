@@ -8,11 +8,11 @@ use std::path::PathBuf;
 
 /// Fatal errors that prevent an audio stream from starting.
 ///
-/// These errors are returned from [`StreamAudio::start()`] and indicate
+/// These errors are returned from [`StreamAudioBuilder::start()`] and indicate
 /// that the stream cannot be created. Runtime issues (slow sinks, buffer
 /// overflow) are handled via the event callback instead.
 ///
-/// [`StreamAudio::start()`]: crate::StreamAudio::start
+/// [`StreamAudioBuilder::start()`]: crate::StreamAudioBuilder::start
 #[derive(Debug, thiserror::Error)]
 pub enum StreamAudioError {
     /// The requested audio device was not found.

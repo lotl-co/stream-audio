@@ -184,7 +184,7 @@ impl AudioDevice {
             .build_input_stream(
                 config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    // Convert f32 to i16 and push
+                    // Inline conversion (not using format::f32_to_i16) to avoid function call overhead in audio callback
                     for &sample in data {
                         let converted = (sample * 32767.0).clamp(-32768.0, 32767.0) as i16;
                         let _ = producer.try_push(converted);

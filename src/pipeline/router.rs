@@ -30,7 +30,6 @@ impl Router {
     }
 
     /// Sets the event callback.
-    #[allow(dead_code)] // Will be used by builder
     pub fn with_event_callback(mut self, callback: EventCallback) -> Self {
         self.event_callback = Some(callback);
         self
@@ -85,7 +84,6 @@ impl Router {
     /// Starts all sinks.
     ///
     /// Returns an error if any sink fails to start.
-    #[allow(dead_code)] // Will be used by builder
     pub async fn start_sinks(&self) -> Result<(), crate::StreamAudioError> {
         for sink in &self.sinks {
             sink.on_start()
