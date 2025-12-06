@@ -84,24 +84,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// Creates a new session with the given handles (single-source).
-    pub(crate) fn new(
-        state: Arc<SessionState>,
-        router_cmd_tx: mpsc::Sender<RouterCommand>,
-        router_handle: JoinHandle<()>,
-        capture_handle: JoinHandle<()>,
-        capture_stream: CaptureStream,
-    ) -> Self {
-        Self {
-            state,
-            router_cmd_tx,
-            router_handle: Some(router_handle),
-            capture_handles: vec![capture_handle],
-            capture_streams: vec![capture_stream],
-        }
-    }
-
-    /// Creates a new session with multiple capture sources (multi-source).
+    /// Creates a new session with capture sources.
     pub(crate) fn new_multi(
         state: Arc<SessionState>,
         router_cmd_tx: mpsc::Sender<RouterCommand>,

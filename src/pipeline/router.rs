@@ -30,7 +30,10 @@ pub struct Router {
 }
 
 impl Router {
-    /// Creates a new router with the given sinks (single-source mode).
+    /// Creates a new router with the given sinks (simple mode without routing).
+    ///
+    /// Used by tests for simple scenarios. For production use, use `with_routing()`.
+    #[allow(dead_code)]
     pub fn new(sinks: Vec<Arc<dyn Sink>>, config: StreamConfig) -> Self {
         Self {
             sinks,

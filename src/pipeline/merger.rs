@@ -59,10 +59,15 @@ struct PendingWindow {
 }
 
 /// Default max pending windows if not specified.
+/// Used by `new()` convenience constructor.
+#[allow(dead_code)]
 const DEFAULT_MAX_PENDING: usize = 10;
 
 impl TimeWindowMerger {
-    /// Creates a new merger for the given sources.
+    /// Creates a new merger for the given sources with default max pending.
+    ///
+    /// Convenience constructor for tests. Production code uses `with_max_pending()`.
+    #[allow(dead_code)]
     pub fn new(
         window_duration: Duration,
         window_timeout: Duration,
