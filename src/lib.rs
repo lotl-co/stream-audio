@@ -51,6 +51,7 @@ mod chunk;
 mod config;
 mod error;
 mod event;
+pub mod format;
 mod pipeline;
 mod sink;
 pub mod source;
