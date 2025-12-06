@@ -1,10 +1,10 @@
 [package]
 name = "stream-audio"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 rust-version = "1.75"
 license = "Apache-2.0"
-description = "Real-time audio capture with multi-sink architecture"
+description = "Real-time audio capture with multi-sink architecture (WIP - name reservation)"
 repository = "https://github.com/lotl-co/stream-audio"
 documentation = "https://docs.rs/stream-audio"
 readme = "README.md"
