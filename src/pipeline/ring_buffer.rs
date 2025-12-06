@@ -133,8 +133,8 @@ pub fn create_audio_buffer(
     channels: u16,
     chunk_duration: Duration,
 ) -> (ringbuf::HeapProd<i16>, AudioBuffer) {
-    let capacity = (sample_rate as f64 * capacity_duration.as_secs_f64()) as usize
-        * channels as usize;
+    let capacity =
+        (sample_rate as f64 * capacity_duration.as_secs_f64()) as usize * channels as usize;
 
     let ring_buffer = HeapRb::<i16>::new(capacity);
     let (producer, consumer) = ring_buffer.split();
@@ -151,12 +151,8 @@ mod tests {
 
     #[test]
     fn test_audio_buffer_read_chunk() {
-        let (mut producer, mut buffer) = create_audio_buffer(
-            Duration::from_secs(1),
-            16000,
-            1,
-            Duration::from_millis(100),
-        );
+        let (mut producer, mut buffer) =
+            create_audio_buffer(Duration::from_secs(1), 16000, 1, Duration::from_millis(100));
 
         // Push 100ms worth of samples (1600 at 16kHz)
         for i in 0..1600i16 {
@@ -172,12 +168,8 @@ mod tests {
 
     #[test]
     fn test_audio_buffer_not_enough_samples() {
-        let (mut producer, mut buffer) = create_audio_buffer(
-            Duration::from_secs(1),
-            16000,
-            1,
-            Duration::from_millis(100),
-        );
+        let (mut producer, mut buffer) =
+            create_audio_buffer(Duration::from_secs(1), 16000, 1, Duration::from_millis(100));
 
         // Push only 50ms worth
         for i in 0..800i16 {
@@ -190,12 +182,8 @@ mod tests {
 
     #[test]
     fn test_audio_buffer_drain() {
-        let (mut producer, mut buffer) = create_audio_buffer(
-            Duration::from_secs(1),
-            16000,
-            1,
-            Duration::from_millis(100),
-        );
+        let (mut producer, mut buffer) =
+            create_audio_buffer(Duration::from_secs(1), 16000, 1, Duration::from_millis(100));
 
         // Push 250ms worth (2.5 chunks)
         for i in 0..4000i16 {
@@ -211,12 +199,8 @@ mod tests {
 
     #[test]
     fn test_audio_buffer_timestamp() {
-        let (mut producer, mut buffer) = create_audio_buffer(
-            Duration::from_secs(1),
-            16000,
-            1,
-            Duration::from_millis(100),
-        );
+        let (mut producer, mut buffer) =
+            create_audio_buffer(Duration::from_secs(1), 16000, 1, Duration::from_millis(100));
 
         // Push 200ms worth
         for _ in 0..3200i16 {

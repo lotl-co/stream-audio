@@ -1,12 +1,12 @@
 //! File sink implementation (placeholder - will be fleshed out).
 
-use crate::{AudioChunk, SinkError};
 use crate::sink::Sink;
+use crate::{AudioChunk, SinkError};
 use async_trait::async_trait;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::io::{BufWriter, Write};
-use std::fs::File;
 
 /// A sink that writes audio to a WAV file.
 ///
@@ -52,12 +52,19 @@ impl FileSink {
     pub fn flush(&self) -> Result<(), SinkError> {
         let mut state = self.state.lock().unwrap();
         if let Some(ref mut writer) = state.writer {
-            writer.flush().map_err(|e| SinkError::file_error(&self.path, e))?;
+            writer
+                .flush()
+                .map_err(|e| SinkError::file_error(&self.path, e))?;
         }
         Ok(())
     }
 
-    fn write_wav_header(writer: &mut BufWriter<File>, sample_rate: u32, channels: u16, data_size: u32) -> std::io::Result<()> {
+    fn write_wav_header(
+        writer: &mut BufWriter<File>,
+        sample_rate: u32,
+        channels: u16,
+        data_size: u32,
+    ) -> std::io::Result<()> {
         // RIFF header
         writer.write_all(b"RIFF")?;
         writer.write_all(&(36 + data_size).to_le_bytes())?; // File size - 8
@@ -66,7 +73,7 @@ impl FileSink {
         // fmt chunk
         writer.write_all(b"fmt ")?;
         writer.write_all(&16u32.to_le_bytes())?; // Chunk size
-        writer.write_all(&1u16.to_le_bytes())?;  // Audio format (PCM)
+        writer.write_all(&1u16.to_le_bytes())?; // Audio format (PCM)
         writer.write_all(&channels.to_le_bytes())?;
         writer.write_all(&sample_rate.to_le_bytes())?;
         let byte_rate = sample_rate * u32::from(channels) * 2; // 16-bit samples
@@ -116,8 +123,8 @@ impl Sink for FileSink {
 
         // Initialize on first write
         if state.writer.is_none() {
-            let file = File::create(&self.path)
-                .map_err(|e| SinkError::file_error(&self.path, e))?;
+            let file =
+                File::create(&self.path).map_err(|e| SinkError::file_error(&self.path, e))?;
             let mut writer = BufWriter::new(file);
 
             // Write placeholder header (will be updated on stop)
@@ -130,7 +137,8 @@ impl Sink for FileSink {
         // Write samples
         if let Some(ref mut writer) = state.writer {
             for sample in &chunk.samples {
-                writer.write_all(&sample.to_le_bytes())
+                writer
+                    .write_all(&sample.to_le_bytes())
                     .map_err(|e| SinkError::file_error(&self.path, e))?;
             }
             state.samples_written += chunk.samples.len() as u64;
@@ -151,7 +159,8 @@ impl Sink for FileSink {
                 .map_err(|e| SinkError::file_error(&self.path, e))?;
 
             // Flush
-            writer.flush()
+            writer
+                .flush()
                 .map_err(|e| SinkError::file_error(&self.path, e))?;
         }
 

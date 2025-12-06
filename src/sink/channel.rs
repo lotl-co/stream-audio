@@ -1,7 +1,7 @@
 //! Channel sink implementation (placeholder).
 
-use crate::{AudioChunk, SinkError};
 use crate::sink::Sink;
+use crate::{AudioChunk, SinkError};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 

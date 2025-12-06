@@ -88,12 +88,12 @@ impl Router {
     #[allow(dead_code)] // Will be used by builder
     pub async fn start_sinks(&self) -> Result<(), crate::StreamAudioError> {
         for sink in &self.sinks {
-            sink.on_start().await.map_err(|e| {
-                crate::StreamAudioError::SinkStartFailed {
+            sink.on_start()
+                .await
+                .map_err(|e| crate::StreamAudioError::SinkStartFailed {
                     sink_name: sink.name().to_string(),
                     reason: e.to_string(),
-                }
-            })?;
+                })?;
         }
         Ok(())
     }
@@ -200,10 +200,7 @@ mod tests {
         let sink1 = Arc::new(TestSink::new("sink1"));
         let sink2 = Arc::new(TestSink::new("sink2"));
 
-        let router = Router::new(
-            vec![sink1.clone(), sink2.clone()],
-            StreamConfig::default(),
-        );
+        let router = Router::new(vec![sink1.clone(), sink2.clone()], StreamConfig::default());
 
         let chunk = AudioChunk::new(vec![0; 100], Duration::ZERO, 16000, 1);
         router.write_chunk(&chunk).await;

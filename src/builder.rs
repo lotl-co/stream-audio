@@ -1,4 +1,4 @@
-//! Builder pattern for StreamAudio.
+//! Builder pattern for `StreamAudio`.
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -34,6 +34,7 @@ use crate::{
 /// ```
 ///
 /// [`StreamAudio::builder()`]: crate::StreamAudio::builder
+#[must_use]
 pub struct StreamAudioBuilder {
     device_name: Option<String>,
     format: FormatPreset,
@@ -145,7 +146,7 @@ impl StreamAudioBuilder {
 
         // Create shared state
         let state = Arc::new(SessionState::new());
-        let state_capture = state.clone();
+        let state_capture = Arc::clone(&state);
 
         // Create and start router
         let mut router = Router::new(self.sinks.clone(), self.config.clone());

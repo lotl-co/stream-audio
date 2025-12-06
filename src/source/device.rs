@@ -35,6 +35,7 @@ impl Default for DeviceConfig {
 ///
 /// This handles device selection, stream configuration, and provides
 /// the ring buffer producer for the audio callback.
+#[must_use]
 pub struct AudioDevice {
     device: Device,
     config: DeviceConfig,

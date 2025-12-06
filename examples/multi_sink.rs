@@ -24,17 +24,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .format(FormatPreset::Transcription)
         .add_sink(FileSink::wav("multi_sink.wav"))
         .add_sink(ChannelSink::new(tx))
-        .on_event(|event| {
-            match event {
-                StreamEvent::BufferOverflow { dropped_ms } => {
-                    eprintln!("Warning: dropped {}ms of audio", dropped_ms);
-                }
-                StreamEvent::SinkError { sink_name, error } => {
-                    eprintln!("Sink '{}' error: {}", sink_name, error);
-                }
-                StreamEvent::StreamInterrupted { reason } => {
-                    eprintln!("Stream interrupted: {}", reason);
-                }
+        .on_event(|event| match event {
+            StreamEvent::BufferOverflow { dropped_ms } => {
+                eprintln!("Warning: dropped {}ms of audio", dropped_ms);
+            }
+            StreamEvent::SinkError { sink_name, error } => {
+                eprintln!("Sink '{}' error: {}", sink_name, error);
+            }
+            StreamEvent::StreamInterrupted { reason } => {
+                eprintln!("Stream interrupted: {}", reason);
             }
         })
         .start()
@@ -52,7 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // In a real application, you might send this to a transcription service
             if chunk_count % 10 == 0 {
                 let duration_ms = total_samples as f64 / 16.0; // 16kHz = 16 samples/ms
-                println!("Processed {} chunks ({:.0}ms of audio)", chunk_count, duration_ms);
+                println!(
+                    "Processed {} chunks ({:.0}ms of audio)",
+                    chunk_count, duration_ms
+                );
             }
         }
 
@@ -70,7 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let duration_secs = samples as f64 / 16000.0;
 
     println!("\nRecording complete!");
-    println!("Processed {} chunks, {} samples ({:.2}s)", chunks, samples, duration_secs);
+    println!(
+        "Processed {} chunks, {} samples ({:.2}s)",
+        chunks, samples, duration_secs
+    );
     println!("File saved to multi_sink.wav");
 
     Ok(())

@@ -7,7 +7,7 @@ use std::time::Duration;
 /// These presets configure sample rate and channel count for typical scenarios.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FormatPreset {
-    /// 16kHz mono - optimal for speech-to-text services like Deepgram, AssemblyAI.
+    /// 16kHz mono - optimal for speech-to-text services like Deepgram, `AssemblyAI`.
     ///
     /// Most transcription APIs prefer this format for efficiency and accuracy.
     #[default]

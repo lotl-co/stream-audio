@@ -59,7 +59,8 @@ impl MockSource {
     /// Generates silence for the given duration in milliseconds.
     pub fn generate_silence(&mut self, duration_ms: u64) {
         let num_samples = self.samples_for_duration(duration_ms);
-        self.samples.extend(std::iter::repeat(0i16).take(num_samples));
+        self.samples
+            .extend(std::iter::repeat(0i16).take(num_samples));
     }
 
     /// Generates a sine wave at the given frequency for the given duration.
@@ -87,7 +88,7 @@ impl MockSource {
         // Simple LCG for deterministic "random" noise
         let mut seed: u32 = 12345;
         for _ in 0..num_samples {
-            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
             let random = ((seed >> 16) as i32 - 32768) as i16;
             let sample = (i32::from(random) * i32::from(amplitude) / 32767) as i16;
             self.samples.push(sample);

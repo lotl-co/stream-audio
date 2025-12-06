@@ -71,7 +71,9 @@ async fn test_file_sink_round_trip() {
     sink.on_start().await.unwrap();
 
     // Write some audio (1 second at 16kHz mono)
-    let samples: Vec<i16> = (0..16000).map(|i| ((i as f32 / 16.0).sin() * 10000.0) as i16).collect();
+    let samples: Vec<i16> = (0..16000)
+        .map(|i| ((i as f32 / 16.0).sin() * 10000.0) as i16)
+        .collect();
     let chunk = AudioChunk::new(samples.clone(), Duration::ZERO, 16000, 1);
     sink.write(&chunk).await.unwrap();
 
@@ -166,7 +168,7 @@ async fn test_resampling() {
 #[tokio::test]
 #[ignore = "requires audio hardware"]
 async fn test_real_capture() {
-    use stream_audio::{StreamAudio, FormatPreset};
+    use stream_audio::{FormatPreset, StreamAudio};
 
     let (tx, mut rx) = mpsc::channel::<AudioChunk>(100);
 

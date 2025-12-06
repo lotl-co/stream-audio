@@ -22,9 +22,7 @@ pub fn list_input_devices() -> Result<Vec<String>, crate::StreamAudioError> {
         .input_devices()
         .map_err(|e| crate::StreamAudioError::BackendError(e.to_string()))?;
 
-    Ok(devices
-        .filter_map(|d| d.name().ok())
-        .collect())
+    Ok(devices.filter_map(|d| d.name().ok()).collect())
 }
 
 /// Gets the name of the default input device, if any.
