@@ -47,6 +47,17 @@ while let Some(chunk) = rx.recv().await {
 session.stop().await?;
 ```
 
+## Glossary
+
+*Consistent terminology helps everyone speak the same language.*
+
+| Term | Description |
+|------|-------------|
+| **Source** | Where audio originates (microphone, system audio, file) |
+| **Sink** | Where audio flows to (file, channel, network) |
+| **Chunk** | A buffer of audio samples with timing metadata |
+| **Session** | An active capture session with start/stop lifecycle |
+
 ## Architecture
 
 ```
