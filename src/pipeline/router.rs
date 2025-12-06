@@ -42,11 +42,18 @@ impl Router {
     }
 
     /// Creates a new router with routing (multi-source mode).
+    ///
+    /// # Arguments
+    ///
+    /// * `sample_rate` - Target sample rate for merged audio output
+    /// * `channels` - Target channel count for merged audio output
     pub fn with_routing(
         sinks: Vec<Arc<dyn Sink>>,
         sink_routes: &[SinkRoute],
         source_ids: Vec<SourceId>,
         config: StreamConfig,
+        sample_rate: u32,
+        channels: u16,
     ) -> Result<Self, crate::StreamAudioError> {
         // Build routing table from sink_routes
         let routing_table =
@@ -58,12 +65,8 @@ impl Router {
                 config.merge_window_duration,
                 config.merge_window_timeout,
                 source_ids,
-                config
-                    .chunk_duration
-                    .as_millis()
-                    .try_into()
-                    .unwrap_or(16000),
-                1, // Mono output for transcription
+                sample_rate,
+                channels,
             )))
         } else {
             None

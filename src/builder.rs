@@ -386,11 +386,19 @@ impl StreamAudioBuilder {
 
         // Create router with routing
         let source_ids = self.source_ids();
+
+        // Determine target sample rate and channels for merged audio.
+        // For Native format, use common defaults (16kHz mono) since merger needs consistent values.
+        let target_sample_rate = self.format.sample_rate().unwrap_or(16000);
+        let target_channels = self.format.channels().unwrap_or(1);
+
         let mut router = Router::with_routing(
             self.sinks.clone(),
             &self.sink_routes,
             source_ids,
             self.config.clone(),
+            target_sample_rate,
+            target_channels,
         )?;
         if let Some(callback) = self.event_callback.clone() {
             router = router.with_event_callback(callback);
