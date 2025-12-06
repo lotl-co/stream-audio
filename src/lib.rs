@@ -48,5 +48,7 @@
 #![warn(missing_docs)]
 
 mod chunk;
+mod config;
 
 pub use chunk::AudioChunk;
+pub use config::{FormatPreset, StreamConfig};
