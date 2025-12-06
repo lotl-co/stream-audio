@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::pipeline::{spawn_capture_bridge, CaptureConfig, Router};
+use crate::pipeline::{spawn_capture_bridge, CaptureConfig, Router, SinkRoute};
 use crate::session::{Session, SessionState};
 use crate::sink::Sink;
-use crate::source::AudioDevice;
+use crate::source::{AudioDevice, SourceId};
 use crate::{
     event_callback, EventCallback, FormatPreset, StreamAudioError, StreamConfig, StreamEvent,
 };
@@ -20,6 +20,29 @@ pub enum DeviceSelection {
     SystemDefault,
     /// Use a specific device by name.
     ByName(String),
+}
+
+/// Configuration for an audio source in multi-source mode.
+#[derive(Debug, Clone)]
+pub struct AudioSource {
+    /// Device selection for this source.
+    pub device: DeviceSelection,
+}
+
+impl AudioSource {
+    /// Create a source from the system default input device.
+    pub fn default_device() -> Self {
+        Self {
+            device: DeviceSelection::SystemDefault,
+        }
+    }
+
+    /// Create a source from a specific device by name.
+    pub fn device(name: impl Into<String>) -> Self {
+        Self {
+            device: DeviceSelection::ByName(name.into()),
+        }
+    }
 }
 
 /// Resolved audio configuration after opening the device.
@@ -37,7 +60,7 @@ struct ResolvedAudioConfig {
 ///
 /// Use [`StreamAudio::builder()`] to create a new builder.
 ///
-/// # Example
+/// # Single-Source Example (v0.1 compatible)
 ///
 /// ```ignore
 /// use stream_audio::{StreamAudio, FileSink, ChannelSink, FormatPreset};
@@ -53,13 +76,38 @@ struct ResolvedAudioConfig {
 ///     .await?;
 /// ```
 ///
+/// # Multi-Source Example (v0.2)
+///
+/// ```ignore
+/// use stream_audio::{StreamAudio, AudioSource, FileSink, ChannelSink, FormatPreset};
+///
+/// let session = StreamAudio::builder()
+///     .add_source("mic", AudioSource::device("MacBook Pro Microphone"))
+///     .add_source("speaker", AudioSource::device("BlackHole 2ch"))
+///     .add_sink_from(FileSink::wav("mic.wav"), "mic")
+///     .add_sink_from(FileSink::wav("speaker.wav"), "speaker")
+///     .add_sink_merged(FileSink::wav("merged.wav"), ["mic", "speaker"])
+///     .format(FormatPreset::Transcription)
+///     .start()
+///     .await?;
+/// ```
+///
 /// [`StreamAudio::builder()`]: crate::StreamAudio::builder
 #[must_use]
 pub struct StreamAudioBuilder {
+    /// Single-source device (backward compatibility).
     device: DeviceSelection,
+    /// Multi-source configurations: (source_id, source_config).
+    sources: Vec<(SourceId, AudioSource)>,
+    /// Format preset for all sources.
     format: FormatPreset,
+    /// Configured sinks.
     sinks: Vec<Arc<dyn Sink>>,
+    /// Routing for each sink (parallel to sinks vec).
+    sink_routes: Vec<SinkRoute>,
+    /// Event callback.
     event_callback: Option<EventCallback>,
+    /// Stream configuration.
     config: StreamConfig,
 }
 
@@ -74,16 +122,21 @@ impl StreamAudioBuilder {
     pub fn new() -> Self {
         Self {
             device: DeviceSelection::default(),
+            sources: Vec::new(),
             format: FormatPreset::default(),
             sinks: Vec::new(),
+            sink_routes: Vec::new(),
             event_callback: None,
             config: StreamConfig::default(),
         }
     }
 
+    // ========== Single-Source API (v0.1 compatible) ==========
+
     /// Use the system's default input device.
     ///
     /// This is the default behavior if no device is specified.
+    /// For multi-source capture, use [`add_source()`](Self::add_source) instead.
     pub fn device_default(mut self) -> Self {
         self.device = DeviceSelection::SystemDefault;
         self
@@ -92,6 +145,7 @@ impl StreamAudioBuilder {
     /// Use a specific input device by name.
     ///
     /// Use [`list_input_devices()`](crate::list_input_devices) to get available device names.
+    /// For multi-source capture, use [`add_source()`](Self::add_source) instead.
     pub fn device(mut self, name: impl Into<String>) -> Self {
         self.device = DeviceSelection::ByName(name.into());
         self
@@ -107,10 +161,87 @@ impl StreamAudioBuilder {
 
     /// Add a sink to receive audio data.
     ///
-    /// At least one sink must be added before calling `start()`.
+    /// In single-source mode, the sink receives all audio.
+    /// In multi-source mode with no routing specified, the sink receives from all sources.
+    ///
+    /// For routing to specific sources, use [`add_sink_from()`](Self::add_sink_from)
+    /// or [`add_sink_merged()`](Self::add_sink_merged).
     pub fn add_sink<S: Sink + 'static>(mut self, sink: S) -> Self {
         self.sinks.push(Arc::new(sink));
+        self.sink_routes.push(SinkRoute::All);
         self
+    }
+
+    // ========== Multi-Source API (v0.2) ==========
+
+    /// Add an audio source with an identifier.
+    ///
+    /// Sources are identified by a string ID that can be used for routing
+    /// sinks to specific sources.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// StreamAudio::builder()
+    ///     .add_source("mic", AudioSource::device("MacBook Pro Microphone"))
+    ///     .add_source("speaker", AudioSource::device("BlackHole 2ch"))
+    ///     // ...
+    /// ```
+    pub fn add_source(mut self, id: impl Into<SourceId>, source: AudioSource) -> Self {
+        self.sources.push((id.into(), source));
+        self
+    }
+
+    /// Add a sink that receives audio from a specific source.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// StreamAudio::builder()
+    ///     .add_source("mic", AudioSource::device("Microphone"))
+    ///     .add_sink_from(FileSink::wav("mic.wav"), "mic")
+    /// ```
+    pub fn add_sink_from<S: Sink + 'static>(
+        mut self,
+        sink: S,
+        source_id: impl Into<SourceId>,
+    ) -> Self {
+        self.sinks.push(Arc::new(sink));
+        self.sink_routes.push(SinkRoute::Single(source_id.into()));
+        self
+    }
+
+    /// Add a sink that receives merged audio from multiple sources.
+    ///
+    /// The merger combines audio from the specified sources by averaging samples.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// StreamAudio::builder()
+    ///     .add_source("mic", AudioSource::device("Microphone"))
+    ///     .add_source("speaker", AudioSource::device("BlackHole"))
+    ///     .add_sink_merged(FileSink::wav("merged.wav"), ["mic", "speaker"])
+    /// ```
+    pub fn add_sink_merged<S, I, Id>(mut self, sink: S, source_ids: I) -> Self
+    where
+        S: Sink + 'static,
+        I: IntoIterator<Item = Id>,
+        Id: Into<SourceId>,
+    {
+        self.sinks.push(Arc::new(sink));
+        self.sink_routes.push(SinkRoute::merged(source_ids));
+        self
+    }
+
+    /// Returns true if this is a multi-source configuration.
+    pub fn is_multi_source(&self) -> bool {
+        !self.sources.is_empty()
+    }
+
+    /// Returns the configured source IDs.
+    pub fn source_ids(&self) -> Vec<SourceId> {
+        self.sources.iter().map(|(id, _)| id.clone()).collect()
     }
 
     /// Set a callback to receive runtime events.
@@ -272,5 +403,45 @@ mod tests {
     fn test_builder_format() {
         let builder = StreamAudio::builder().format(FormatPreset::Native);
         assert_eq!(builder.format, FormatPreset::Native);
+    }
+
+    #[test]
+    fn test_builder_add_source() {
+        let builder = StreamAudio::builder()
+            .add_source("mic", AudioSource::device("Microphone"))
+            .add_source("speaker", AudioSource::device("BlackHole"));
+
+        assert!(builder.is_multi_source());
+        assert_eq!(builder.sources.len(), 2);
+        assert_eq!(builder.source_ids().len(), 2);
+    }
+
+    #[test]
+    fn test_builder_sink_routing() {
+        let builder = StreamAudio::builder()
+            .add_source("mic", AudioSource::default_device())
+            .add_source("speaker", AudioSource::default_device())
+            .add_sink_from(crate::sink::ChannelSink::new(mpsc::channel(1).0), "mic")
+            .add_sink_merged(
+                crate::sink::ChannelSink::new(mpsc::channel(1).0),
+                ["mic", "speaker"],
+            );
+
+        assert_eq!(builder.sinks.len(), 2);
+        assert_eq!(builder.sink_routes.len(), 2);
+        assert!(matches!(&builder.sink_routes[0], SinkRoute::Single(_)));
+        assert!(matches!(&builder.sink_routes[1], SinkRoute::Merged(_)));
+    }
+
+    #[test]
+    fn test_builder_backward_compat() {
+        // v0.1 style API should still work
+        let builder = StreamAudio::builder()
+            .device("Microphone")
+            .add_sink(crate::sink::ChannelSink::new(mpsc::channel(1).0));
+
+        assert!(!builder.is_multi_source());
+        assert_eq!(builder.sinks.len(), 1);
+        assert!(matches!(&builder.sink_routes[0], SinkRoute::All));
     }
 }

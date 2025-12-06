@@ -69,7 +69,7 @@ mod session;
 mod sink;
 pub mod source;
 
-pub use builder::{DeviceSelection, StreamAudio, StreamAudioBuilder};
+pub use builder::{AudioSource, DeviceSelection, StreamAudio, StreamAudioBuilder};
 pub use chunk::AudioChunk;
 pub use config::{FormatPreset, StreamConfig};
 pub use error::{SinkError, StreamAudioError};
