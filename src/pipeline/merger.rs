@@ -210,7 +210,20 @@ impl TimeWindowMerger {
         })
     }
 
-    /// Merges chunks from multiple sources into one.
+    /// Merges chunks from multiple sources into one using averaging.
+    ///
+    /// # Merge Strategy
+    ///
+    /// We use averaging (not summing) because:
+    /// - No clipping risk: combined waveform stays within [-1, 1] range
+    /// - ASR-friendly: clean, undistorted signal for speech recognition
+    ///
+    /// Trade-offs:
+    /// - Volume drops when a source is missing (silence counts toward average)
+    /// - Quiet sources become quieter when mixed with many sources
+    ///
+    /// If summing with clipping or normalization is needed, consider adding a
+    /// `MergeMode` enum to make this configurable.
     fn merge_chunks(
         &self,
         chunks: &HashMap<SourceId, Arc<AudioChunk>>,
@@ -246,14 +259,15 @@ impl TimeWindowMerger {
             count += 1;
         }
 
-        // Fill in missing sources with silence (no change to merged)
+        // Divide by total expected sources to maintain consistent volume.
+        // Missing sources contribute silence (0), but we still count them in
+        // the divisor to prevent volume spikes when sources drop.
         let total_sources = self.expected_sources.len();
         if count < total_sources {
-            // Missing sources are effectively silence (0), already in merged
             count = total_sources;
         }
 
-        // Normalize and clamp
+        // Average and clamp to i16 range
         let samples: Vec<i16> = merged
             .iter()
             .map(|&s| {
