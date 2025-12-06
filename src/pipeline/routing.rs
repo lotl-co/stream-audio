@@ -32,6 +32,7 @@ impl Default for SinkRoute {
 
 impl SinkRoute {
     /// Creates a route for a single source.
+    #[allow(dead_code)] // Public API for external use
     pub fn single(source_id: impl Into<SourceId>) -> Self {
         Self::Single(source_id.into())
     }
@@ -46,6 +47,7 @@ impl SinkRoute {
     }
 
     /// Returns true if this route wants chunks from the given source.
+    #[allow(dead_code)] // Public API for external use
     pub fn wants_source(&self, source_id: &SourceId) -> bool {
         match self {
             Self::All => true,
@@ -55,11 +57,13 @@ impl SinkRoute {
     }
 
     /// Returns true if this is a merge route.
+    #[allow(dead_code)] // Public API for external use
     pub fn is_merged(&self) -> bool {
         matches!(self, Self::Merged(_))
     }
 
     /// Returns the set of source IDs this route needs, if known.
+    #[allow(dead_code)] // Public API for external use
     pub fn required_sources(&self) -> Option<&HashSet<SourceId>> {
         match self {
             Self::Merged(ids) => Some(ids),
@@ -83,14 +87,16 @@ pub struct RoutingTable {
     /// Merge configurations: (source set, sink indices).
     merge_groups: Vec<MergeGroup>,
 
-    /// All known source IDs.
+    /// All known source IDs (for introspection).
+    #[allow(dead_code)]
     source_ids: HashSet<SourceId>,
 }
 
 /// A group of sources that are merged and sent to specific sinks.
 #[derive(Debug, Clone)]
 pub struct MergeGroup {
-    /// The sources to merge.
+    /// The sources to merge (for introspection).
+    #[allow(dead_code)]
     pub sources: HashSet<SourceId>,
     /// Indices of sinks that want this merged output.
     pub sink_indices: Vec<usize>,
@@ -183,7 +189,8 @@ impl RoutingTable {
         &self.merge_groups
     }
 
-    /// Returns all known source IDs.
+    /// Returns all known source IDs (for introspection).
+    #[allow(dead_code)]
     pub fn source_ids(&self) -> &HashSet<SourceId> {
         &self.source_ids
     }
@@ -194,50 +201,9 @@ impl RoutingTable {
     }
 
     /// Returns true if this is a single-source setup (backward compatibility).
+    #[allow(dead_code)]
     pub fn is_single_source(&self) -> bool {
         self.source_ids.len() <= 1
-    }
-}
-
-/// Builder for creating sink routes fluently.
-#[derive(Debug, Clone)]
-pub struct SinkRouteBuilder {
-    route: SinkRoute,
-}
-
-impl SinkRouteBuilder {
-    /// Creates a new builder with default route (all sources).
-    pub fn new() -> Self {
-        Self {
-            route: SinkRoute::All,
-        }
-    }
-
-    /// Route from a single source.
-    pub fn with_source(mut self, source_id: impl Into<SourceId>) -> Self {
-        self.route = SinkRoute::Single(source_id.into());
-        self
-    }
-
-    /// Route from merged sources.
-    pub fn with_merged<I, S>(mut self, sources: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<SourceId>,
-    {
-        self.route = SinkRoute::Merged(sources.into_iter().map(Into::into).collect());
-        self
-    }
-
-    /// Build the final route.
-    pub fn build(self) -> SinkRoute {
-        self.route
-    }
-}
-
-impl Default for SinkRouteBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -321,14 +287,4 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_sink_route_builder() {
-        let route = SinkRouteBuilder::new().with_source("mic").build();
-        assert!(matches!(route, SinkRoute::Single(_)));
-
-        let route = SinkRouteBuilder::new()
-            .with_merged(["mic", "speaker"])
-            .build();
-        assert!(matches!(route, SinkRoute::Merged(_)));
-    }
 }

@@ -388,7 +388,7 @@ impl StreamAudioBuilder {
         let source_ids = self.source_ids();
         let mut router = Router::with_routing(
             self.sinks.clone(),
-            self.sink_routes.clone(),
+            &self.sink_routes,
             source_ids,
             self.config.clone(),
         )?;

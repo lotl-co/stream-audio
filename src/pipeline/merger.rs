@@ -219,12 +219,14 @@ impl TimeWindowMerger {
         )
     }
 
-    /// Returns the number of pending windows.
+    /// Returns the number of pending windows (for testing/debugging).
+    #[allow(dead_code)]
     pub fn pending_count(&self) -> usize {
         self.pending.len()
     }
 
-    /// Clears all pending windows.
+    /// Clears all pending windows (for testing/cleanup).
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.pending.clear();
     }

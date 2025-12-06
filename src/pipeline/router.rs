@@ -21,8 +21,6 @@ pub enum RouterCommand {
 /// In multi-source mode, chunks are routed based on the routing table.
 pub struct Router {
     sinks: Vec<Arc<dyn Sink>>,
-    /// Sink routes (parallel to sinks vec).
-    sink_routes: Vec<SinkRoute>,
     /// Routing table for efficient dispatch (only in multi-source mode).
     routing_table: Option<RoutingTable>,
     /// Merger for combined sinks (only when merge routes exist).
@@ -34,10 +32,8 @@ pub struct Router {
 impl Router {
     /// Creates a new router with the given sinks (single-source mode).
     pub fn new(sinks: Vec<Arc<dyn Sink>>, config: StreamConfig) -> Self {
-        let sink_routes = vec![SinkRoute::All; sinks.len()];
         Self {
             sinks,
-            sink_routes,
             routing_table: None,
             merger: None,
             event_callback: None,
@@ -48,11 +44,11 @@ impl Router {
     /// Creates a new router with routing (multi-source mode).
     pub fn with_routing(
         sinks: Vec<Arc<dyn Sink>>,
-        sink_routes: Vec<SinkRoute>,
+        sink_routes: &[SinkRoute],
         source_ids: Vec<SourceId>,
         config: StreamConfig,
     ) -> Result<Self, crate::StreamAudioError> {
-        // Build routing table
+        // Build routing table from sink_routes
         let routing_table =
             RoutingTable::new(sink_routes.iter().enumerate(), source_ids.iter().cloned())?;
 
@@ -75,7 +71,6 @@ impl Router {
 
         Ok(Self {
             sinks,
-            sink_routes,
             routing_table: Some(routing_table),
             merger,
             event_callback: None,
@@ -89,7 +84,8 @@ impl Router {
         self
     }
 
-    /// Returns true if this is a multi-source router.
+    /// Returns true if this is a multi-source router (for introspection).
+    #[allow(dead_code)]
     pub fn is_multi_source(&self) -> bool {
         self.routing_table.is_some()
     }

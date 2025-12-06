@@ -20,7 +20,6 @@ mod router;
 mod routing;
 
 pub(crate) use capture::{spawn_capture_bridge, CaptureConfig};
-pub(crate) use merger::{MergeResult, TimeWindowMerger};
 pub(crate) use ring_buffer::AudioBuffer;
 pub(crate) use router::{Router, RouterCommand};
-pub(crate) use routing::{MergeGroup, RoutingTable, SinkRoute, SinkRouteBuilder};
+pub(crate) use routing::SinkRoute;
