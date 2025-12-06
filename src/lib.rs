@@ -77,5 +77,5 @@ pub use event::{event_callback, EventCallback, StreamEvent};
 pub use session::{Session, SessionStats};
 pub use sink::{ChannelSink, FileSink, Sink};
 pub use source::{
-    default_input_device_name, list_input_devices, AudioDevice, DeviceConfig, MockSource,
+    default_input_device_name, list_input_devices, AudioDevice, DeviceConfig, MockSource, SourceId,
 };

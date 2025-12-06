@@ -54,7 +54,7 @@ impl Sink for StatsSink {
             .fetch_add(chunk.samples.len() as u64, Ordering::Relaxed);
 
         // Update min/max (approximate - may miss updates under contention)
-        for &sample in &chunk.samples {
+        for &sample in chunk.samples.iter() {
             // Update minimum
             let mut current_min = self.min_sample.load(Ordering::Relaxed);
             while sample < current_min {

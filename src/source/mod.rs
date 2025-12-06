@@ -5,9 +5,11 @@
 
 mod device;
 mod mock;
+mod source_id;
 
 pub use device::{AudioDevice, CaptureStream, DeviceConfig};
 pub use mock::MockSource;
+pub use source_id::SourceId;
 
 use cpal::traits::{DeviceTrait, HostTrait};
 
