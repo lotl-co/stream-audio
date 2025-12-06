@@ -14,8 +14,11 @@ use crate::StreamAudioError;
 /// Specifies which sources a sink should receive audio from.
 #[derive(Debug, Clone)]
 pub enum SinkRoute {
-    /// Receive audio from all sources (default, backward compatible).
-    All,
+    /// Receive audio from each source independently (broadcast).
+    ///
+    /// Each source's chunks are sent separately to this sink. Use this when
+    /// the sink should process audio from all sources without merging.
+    Broadcast,
 
     /// Receive audio from a single source only.
     Single(SourceId),
@@ -26,7 +29,7 @@ pub enum SinkRoute {
 
 impl Default for SinkRoute {
     fn default() -> Self {
-        Self::All
+        Self::Broadcast
     }
 }
 
@@ -50,7 +53,7 @@ impl SinkRoute {
     #[allow(dead_code)] // Public API for external use
     pub fn wants_source(&self, source_id: &SourceId) -> bool {
         match self {
-            Self::All => true,
+            Self::Broadcast => true,
             Self::Single(id) => id == source_id,
             Self::Merged(ids) => ids.contains(source_id),
         }
@@ -124,7 +127,7 @@ impl RoutingTable {
 
         for (sink_idx, route) in routes {
             match route {
-                SinkRoute::All => {
+                SinkRoute::Broadcast => {
                     broadcast_sinks.push(sink_idx);
                 }
                 SinkRoute::Single(source_id) => {
@@ -212,8 +215,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_sink_route_all() {
-        let route = SinkRoute::All;
+    fn test_sink_route_broadcast() {
+        let route = SinkRoute::Broadcast;
         assert!(route.wants_source(&SourceId::new("mic")));
         assert!(route.wants_source(&SourceId::new("speaker")));
         assert!(!route.is_merged());
@@ -255,7 +258,7 @@ mod tests {
     #[test]
     fn test_routing_table_broadcast() {
         let sources = vec![SourceId::new("mic")];
-        let routes = vec![(0, SinkRoute::All), (1, SinkRoute::All)];
+        let routes = vec![(0, SinkRoute::Broadcast), (1, SinkRoute::Broadcast)];
 
         let table = RoutingTable::new(routes.iter().map(|(i, r)| (*i, r)), sources).unwrap();
 

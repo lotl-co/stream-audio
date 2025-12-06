@@ -143,7 +143,7 @@ impl StreamAudioBuilder {
     /// or [`add_sink_merged()`](Self::add_sink_merged).
     pub fn add_sink<S: Sink + 'static>(mut self, sink: S) -> Self {
         self.sinks.push(Arc::new(sink));
-        self.sink_routes.push(SinkRoute::All);
+        self.sink_routes.push(SinkRoute::Broadcast);
         self
     }
 
@@ -416,6 +416,6 @@ mod tests {
             .add_sink(crate::sink::ChannelSink::new(mpsc::channel(1).0));
 
         assert_eq!(builder.sinks.len(), 1);
-        assert!(matches!(&builder.sink_routes[0], SinkRoute::All));
+        assert!(matches!(&builder.sink_routes[0], SinkRoute::Broadcast));
     }
 }
