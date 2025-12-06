@@ -78,7 +78,7 @@ cargo build
 cargo test
 cargo clippy
 cargo fmt
-cargo doc –no-deps
+cargo doc --no-deps
 ```
 
 ---
