@@ -265,6 +265,17 @@ impl StreamAudioBuilder {
         if self.sinks.is_empty() {
             return Err(StreamAudioError::NoSinksConfigured);
         }
+
+        // Check for duplicate source IDs
+        let mut seen = std::collections::HashSet::new();
+        for (id, _) in &self.sources {
+            if !seen.insert(id) {
+                return Err(StreamAudioError::DuplicateSourceId {
+                    source_id: id.to_string(),
+                });
+            }
+        }
+
         Ok(())
     }
 
@@ -457,5 +468,19 @@ mod tests {
 
         assert_eq!(builder.sinks.len(), 1);
         assert!(matches!(&builder.sink_routes[0], SinkRoute::Broadcast));
+    }
+
+    #[test]
+    fn test_builder_rejects_duplicate_source_ids() {
+        let builder = StreamAudio::builder()
+            .add_source("mic", AudioSource::default_device())
+            .add_source("mic", AudioSource::default_device()) // Duplicate!
+            .add_sink(crate::sink::ChannelSink::new(mpsc::channel(1).0));
+
+        let result = builder.validate();
+        assert!(matches!(
+            result,
+            Err(StreamAudioError::DuplicateSourceId { .. })
+        ));
     }
 }
