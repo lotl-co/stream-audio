@@ -11,12 +11,13 @@
 //! ## Quick Start
 //!
 //! ```rust,ignore
-//! use stream_audio::{StreamAudio, FileSink, ChannelSink, FormatPreset};
+//! use stream_audio::{StreamAudio, AudioSource, FileSink, ChannelSink, FormatPreset};
 //! use tokio::sync::mpsc;
 //!
-//! let (tx, rx) = mpsc::channel::<AudioChunk>(100);
+//! let (tx, rx) = mpsc::channel::<AudioChunk>(32);
 //!
 //! let session = StreamAudio::builder()
+//!     .add_source("mic", AudioSource::default_device())
 //!     .format(FormatPreset::Transcription)           // 16kHz mono
 //!     .add_sink(FileSink::wav("meeting.wav"))
 //!     .add_sink(ChannelSink::new(tx))

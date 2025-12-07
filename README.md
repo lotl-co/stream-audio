@@ -26,12 +26,13 @@ This crate is designed for **local/desktop audio capture** - capturing audio fro
 ## Quick Start
 
 ```rust
-use stream_audio::{StreamAudio, FileSink, ChannelSink, FormatPreset};
+use stream_audio::{StreamAudio, AudioSource, FileSink, ChannelSink, FormatPreset};
 use tokio::sync::mpsc;
 
-let (tx, rx) = mpsc::channel::<AudioChunk>(100);
+let (tx, rx) = mpsc::channel::<AudioChunk>(32);
 
 let session = StreamAudio::builder()
+    .add_source("mic", AudioSource::default_device())
     .format(FormatPreset::Transcription)           // 16kHz mono
     .add_sink(FileSink::wav("meeting.wav"))
     .add_sink(ChannelSink::new(tx))
@@ -45,6 +46,24 @@ while let Some(chunk) = rx.recv().await {
 }
 
 session.stop().await?;
+```
+
+## Multi-Source Capture
+
+Capture from multiple audio sources simultaneously with routing to different sinks:
+
+```rust
+let session = StreamAudio::builder()
+    .add_source("mic", AudioSource::device("MacBook Pro Microphone"))
+    .add_source("speaker", AudioSource::device("BlackHole 2ch"))
+    // Route to specific sources
+    .add_sink_from(FileSink::wav("mic.wav"), "mic")
+    .add_sink_from(FileSink::wav("speaker.wav"), "speaker")
+    // Merge multiple sources into one sink
+    .add_sink_merged(FileSink::wav("merged.wav"), ["mic", "speaker"])
+    .format(FormatPreset::Transcription)
+    .start()
+    .await?;
 ```
 
 ## Glossary
