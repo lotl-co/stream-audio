@@ -83,7 +83,7 @@ pub struct Session {
     capture_streams: Vec<CaptureStream>,
     /// Source IDs for event emission.
     source_ids: Vec<SourceId>,
-    /// Event callback for SourceStopped events.
+    /// Event callback for `SourceStopped` events.
     event_callback: Option<EventCallback>,
 }
 

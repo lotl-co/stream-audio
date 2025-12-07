@@ -143,7 +143,7 @@ impl TimeWindowMerger {
         results
     }
 
-    /// Evicts oldest windows if pending count exceeds max_pending.
+    /// Evicts oldest windows if pending count exceeds `max_pending`.
     fn evict_excess_windows(&mut self) -> Vec<MergeResult> {
         let mut results = Vec::new();
 
