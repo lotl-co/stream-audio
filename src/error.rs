@@ -78,11 +78,9 @@ pub enum StreamAudioError {
     #[error("no sources configured - add at least one source")]
     NoSourcesConfigured,
 
-    /// A sink references an unknown source ID.
-    #[error("sink '{sink_name}' references unknown source: {source_id}")]
+    /// A sink route references an unknown source ID.
+    #[error("unknown source in route: {source_id}")]
     UnknownSourceInRoute {
-        /// Name of the sink with the invalid route.
-        sink_name: String,
         /// The source ID that wasn't found.
         source_id: String,
     },

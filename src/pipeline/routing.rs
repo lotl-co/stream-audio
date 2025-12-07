@@ -120,7 +120,6 @@ impl RoutingTable {
                 SinkRoute::Single(source_id) => {
                     if !source_ids.contains(source_id) {
                         return Err(StreamAudioError::UnknownSourceInRoute {
-                            sink_name: format!("sink_{sink_idx}"),
                             source_id: source_id.to_string(),
                         });
                     }
@@ -134,7 +133,6 @@ impl RoutingTable {
                     for source_id in sources {
                         if !source_ids.contains(source_id) {
                             return Err(StreamAudioError::UnknownSourceInRoute {
-                                sink_name: format!("sink_{sink_idx}"),
                                 source_id: source_id.to_string(),
                             });
                         }
