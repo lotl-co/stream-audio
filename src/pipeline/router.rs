@@ -419,4 +419,108 @@ mod tests {
 
         assert_eq!(sink.writes(), 1);
     }
+
+    /// Creates a test chunk from a specific source.
+    fn chunk_from(source: &str, timestamp_ms: u64) -> AudioChunk {
+        AudioChunk::with_source(
+            vec![1, 2, 3],
+            Duration::from_millis(timestamp_ms),
+            16000,
+            1,
+            SourceId::new(source),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_direct_routing_single_source() {
+        let sink_mic = Arc::new(TestSink::new("mic_sink"));
+        let sink_speaker = Arc::new(TestSink::new("speaker_sink"));
+
+        let routes = vec![
+            SinkRoute::Single(SourceId::new("mic")),
+            SinkRoute::Single(SourceId::new("speaker")),
+        ];
+
+        let router = Router::with_routing(
+            vec![sink_mic.clone(), sink_speaker.clone()],
+            &routes,
+            vec![SourceId::new("mic"), SourceId::new("speaker")],
+            StreamConfig::default(),
+            16000,
+            1,
+        )
+        .unwrap();
+
+        // Chunk from mic should only go to mic_sink
+        router.write_chunk(&chunk_from("mic", 50)).await;
+        assert_eq!(sink_mic.writes(), 1);
+        assert_eq!(sink_speaker.writes(), 0);
+
+        // Chunk from speaker should only go to speaker_sink
+        router.write_chunk(&chunk_from("speaker", 50)).await;
+        assert_eq!(sink_mic.writes(), 1);
+        assert_eq!(sink_speaker.writes(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_receives_all_sources() {
+        let sink_broadcast = Arc::new(TestSink::new("broadcast"));
+        let sink_mic_only = Arc::new(TestSink::new("mic_only"));
+
+        let routes = vec![
+            SinkRoute::Broadcast,
+            SinkRoute::Single(SourceId::new("mic")),
+        ];
+
+        let router = Router::with_routing(
+            vec![sink_broadcast.clone(), sink_mic_only.clone()],
+            &routes,
+            vec![SourceId::new("mic"), SourceId::new("speaker")],
+            StreamConfig::default(),
+            16000,
+            1,
+        )
+        .unwrap();
+
+        // Mic chunk: broadcast gets it, mic_only gets it
+        router.write_chunk(&chunk_from("mic", 50)).await;
+        assert_eq!(sink_broadcast.writes(), 1);
+        assert_eq!(sink_mic_only.writes(), 1);
+
+        // Speaker chunk: broadcast gets it, mic_only doesn't
+        router.write_chunk(&chunk_from("speaker", 50)).await;
+        assert_eq!(sink_broadcast.writes(), 2);
+        assert_eq!(sink_mic_only.writes(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_merged_routing() {
+        let sink_merged = Arc::new(TestSink::new("merged"));
+        let sink_direct = Arc::new(TestSink::new("direct"));
+
+        let routes = vec![
+            SinkRoute::merged(["mic", "speaker"]),
+            SinkRoute::Single(SourceId::new("mic")),
+        ];
+
+        let router = Router::with_routing(
+            vec![sink_merged.clone(), sink_direct.clone()],
+            &routes,
+            vec![SourceId::new("mic"), SourceId::new("speaker")],
+            StreamConfig::default(),
+            16000,
+            1,
+        )
+        .unwrap();
+
+        // Add mic chunk - direct sink gets it, merged waits for speaker
+        router.write_chunk(&chunk_from("mic", 50)).await;
+        assert_eq!(sink_direct.writes(), 1);
+        assert_eq!(sink_merged.writes(), 0); // Window not complete
+
+        // Add speaker chunk in same window - merged sink now gets output
+        router.write_chunk(&chunk_from("speaker", 50)).await;
+        assert_eq!(sink_direct.writes(), 1); // No direct route for speaker
+        assert_eq!(sink_merged.writes(), 1); // Window complete, merged chunk emitted
+    }
 }
