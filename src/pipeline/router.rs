@@ -9,6 +9,14 @@ use crate::sink::Sink;
 use crate::source::SourceId;
 use crate::{AudioChunk, EventCallback, StreamConfig, StreamEvent};
 
+/// Ticks the interval or pends forever if None.
+async fn tick_or_pend(interval: Option<&mut tokio::time::Interval>) -> tokio::time::Instant {
+    match interval {
+        Some(int) => int.tick().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// Command sent to the router task.
 pub enum RouterCommand {
     /// Stop the router gracefully.
@@ -251,8 +259,7 @@ impl Router {
         mut chunk_rx: mpsc::Receiver<AudioChunk>,
         mut cmd_rx: mpsc::Receiver<RouterCommand>,
     ) {
-        let timeout_interval = self.create_timeout_interval();
-        tokio::pin!(timeout_interval);
+        let mut timeout_interval = self.create_timeout_interval();
 
         loop {
             tokio::select! {
@@ -265,7 +272,7 @@ impl Router {
                     }
                 }
                 // Timeout tick only fires if merger exists
-                _ = Self::tick_or_pend(&mut timeout_interval) => {
+                _ = tick_or_pend(timeout_interval.as_mut()) => {
                     self.check_merge_timeouts().await;
                 }
                 else => break,
@@ -281,17 +288,6 @@ impl Router {
         self.merger
             .as_ref()
             .map(|_| tokio::time::interval(self.config.merge_window_timeout / 2))
-    }
-
-    /// Ticks the interval or pends forever if None.
-    async fn tick_or_pend(
-        interval: &mut std::pin::Pin<&mut Option<tokio::time::Interval>>,
-    ) -> tokio::time::Instant {
-        if let Some(ref mut int) = interval.as_mut().as_pin_mut() {
-            int.tick().await
-        } else {
-            std::future::pending().await
-        }
     }
 
     /// Handles a router command. Returns true if the router should stop.
