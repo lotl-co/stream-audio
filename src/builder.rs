@@ -483,4 +483,13 @@ mod tests {
             Err(StreamAudioError::DuplicateSourceId { .. })
         ));
     }
+
+    #[test]
+    fn test_builder_rejects_no_sources() {
+        let builder =
+            StreamAudio::builder().add_sink(crate::sink::ChannelSink::new(mpsc::channel(1).0));
+
+        let result = builder.validate();
+        assert!(matches!(result, Err(StreamAudioError::NoSourcesConfigured)));
+    }
 }

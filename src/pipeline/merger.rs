@@ -235,8 +235,8 @@ impl TimeWindowMerger {
         chunks: &HashMap<SourceId, AudioChunk>,
         timestamp: Duration,
     ) -> AudioChunk {
-        if chunks.is_empty() {
-            // No chunks - return silence
+        // Use first chunk to determine length; if empty, return silence
+        let Some(first) = chunks.values().next() else {
             let samples_per_window = (self.sample_rate as f64 * self.window_duration.as_secs_f64())
                 as usize
                 * self.channels as usize;
@@ -246,10 +246,7 @@ impl TimeWindowMerger {
                 self.sample_rate,
                 self.channels,
             );
-        }
-
-        // Use first chunk to determine length
-        let first = chunks.values().next().unwrap();
+        };
         let len = first.samples.len();
 
         // Accumulate samples in i32 to avoid overflow

@@ -54,6 +54,10 @@ impl Router {
     ///
     /// # Arguments
     ///
+    /// * `sinks` - Sinks to route audio to
+    /// * `sink_routes` - Routing configuration for each sink
+    /// * `source_ids` - IDs of all audio sources
+    /// * `config` - Stream configuration
     /// * `sample_rate` - Target sample rate for merged audio output
     /// * `channels` - Target channel count for merged audio output
     pub fn with_routing(
