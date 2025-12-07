@@ -12,12 +12,13 @@ use crate::source::SourceId;
 use crate::StreamAudioError;
 
 /// Specifies which sources a sink should receive audio from.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum SinkRoute {
     /// Receive audio from each source independently (broadcast).
     ///
     /// Each source's chunks are sent separately to this sink. Use this when
     /// the sink should process audio from all sources without merging.
+    #[default]
     Broadcast,
 
     /// Receive audio from a single source only.
@@ -25,12 +26,6 @@ pub enum SinkRoute {
 
     /// Receive merged audio from multiple sources.
     Merged(HashSet<SourceId>),
-}
-
-impl Default for SinkRoute {
-    fn default() -> Self {
-        Self::Broadcast
-    }
 }
 
 impl SinkRoute {

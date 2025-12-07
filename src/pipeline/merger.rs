@@ -9,6 +9,14 @@
 //! similar workloads, the window-based alignment is sufficient. Applications
 //! requiring precise multi-device synchronization should implement their own
 //! clock correction layer.
+//!
+//! **Format requirement:** When using [`FormatPreset::Native`], all merged sources
+//! must have matching hardware sample rates and channel counts. The merger assumes
+//! uniform format and does not resample or remix. Use [`FormatPreset::Transcription`]
+//! (or a future custom format) to normalize sources to a common format before merging.
+//!
+//! [`FormatPreset::Native`]: crate::FormatPreset::Native
+//! [`FormatPreset::Transcription`]: crate::FormatPreset::Transcription
 
 use std::collections::HashMap;
 use std::sync::Arc;
