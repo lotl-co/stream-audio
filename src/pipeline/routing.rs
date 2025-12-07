@@ -6,7 +6,7 @@
 //! - Multiple sources merged together (merge routing)
 //! - All sources (broadcast routing, default for backward compatibility)
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::source::SourceId;
 use crate::StreamAudioError;
@@ -102,7 +102,8 @@ impl RoutingTable {
         let source_ids: HashSet<SourceId> = source_ids.into_iter().collect();
         let mut direct_routes: HashMap<SourceId, Vec<usize>> = HashMap::new();
         let mut broadcast_sinks = Vec::new();
-        let mut merge_map: HashMap<Vec<SourceId>, Vec<usize>> = HashMap::new();
+        // BTreeSet maintains sorted order and implements Hash, avoiding manual sorting
+        let mut merge_map: HashMap<BTreeSet<SourceId>, Vec<usize>> = HashMap::new();
 
         for (sink_idx, route) in routes {
             match route {
@@ -129,9 +130,7 @@ impl RoutingTable {
                             });
                         }
                     }
-                    // Use sorted vec as key for deduplication
-                    let mut key: Vec<SourceId> = sources.iter().cloned().collect();
-                    key.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+                    let key: BTreeSet<SourceId> = sources.iter().cloned().collect();
                     merge_map.entry(key).or_default().push(sink_idx);
                 }
             }

@@ -19,7 +19,7 @@ use std::sync::Arc;
 /// assert_ne!(mic, speaker);
 /// assert_eq!(mic, SourceId::new("mic"));
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SourceId(Arc<str>);
 
 impl SourceId {
