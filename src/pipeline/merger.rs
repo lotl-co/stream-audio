@@ -262,9 +262,9 @@ impl TimeWindowMerger {
             count += 1;
         }
 
-        // Divide by total expected sources to maintain consistent volume.
-        // Missing sources contribute silence (0), but we still count them in
-        // the divisor to prevent volume spikes when sources drop.
+        // Divide by total expected sources (not just present ones) to maintain
+        // consistent volume regardless of how many sources are active.
+        // This prevents volume spikes when sources temporarily drop out.
         debug_assert!(
             count <= self.expected_sources.len(),
             "More sources contributed than expected: {} > {}",
