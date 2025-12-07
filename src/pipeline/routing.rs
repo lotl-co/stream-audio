@@ -85,9 +85,6 @@ pub struct RoutingTable {
 /// A group of sources that are merged and sent to specific sinks.
 #[derive(Debug, Clone)]
 pub struct MergeGroup {
-    /// The sources to merge (for introspection).
-    #[allow(dead_code)]
-    pub sources: HashSet<SourceId>,
     /// Indices of sinks that want this merged output.
     pub sink_indices: Vec<usize>,
 }
@@ -147,11 +144,8 @@ impl RoutingTable {
 
         // Convert merge_map to merge_groups
         let merge_groups = merge_map
-            .into_iter()
-            .map(|(sources, sink_indices)| MergeGroup {
-                sources: sources.into_iter().collect(),
-                sink_indices,
-            })
+            .into_values()
+            .map(|sink_indices| MergeGroup { sink_indices })
             .collect();
 
         Ok(Self {

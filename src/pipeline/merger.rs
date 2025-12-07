@@ -3,6 +3,12 @@
 //! The merger aligns audio chunks from multiple sources by timestamp,
 //! grouping them into windows and combining samples when all sources
 //! have contributed to a window.
+//!
+//! **Note:** Timestamps are per-source (relative to each source's start time).
+//! No cross-device clock normalization is performed. For transcription and
+//! similar workloads, the window-based alignment is sufficient. Applications
+//! requiring precise multi-device synchronization should implement their own
+//! clock correction layer.
 
 use std::collections::HashMap;
 use std::sync::Arc;

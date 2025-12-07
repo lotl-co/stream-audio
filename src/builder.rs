@@ -30,7 +30,7 @@ const DEFAULT_NATIVE_CHANNELS: u16 = 1;
 
 /// Specifies which audio input device to use.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum DeviceSelection {
+pub(crate) enum DeviceSelection {
     /// Use the system's default input device.
     #[default]
     SystemDefault,
@@ -42,7 +42,7 @@ pub enum DeviceSelection {
 #[derive(Debug, Clone)]
 pub struct AudioSource {
     /// Device selection for this source.
-    pub device: DeviceSelection,
+    pub(crate) device: DeviceSelection,
 }
 
 impl AudioSource {
