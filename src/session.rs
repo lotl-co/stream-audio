@@ -7,8 +7,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::pipeline::RouterCommand;
-use crate::source::CaptureStream;
-use crate::StreamAudioError;
+use crate::source::{CaptureStream, SourceId};
+use crate::{EventCallback, StreamAudioError, StreamEvent};
 
 /// Default timeout for graceful shutdown operations.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -76,11 +76,15 @@ pub struct Session {
     state: Arc<SessionState>,
     router_cmd_tx: mpsc::Sender<RouterCommand>,
     router_handle: Option<JoinHandle<()>>,
-    /// Capture handles for all sources (one for single-source, multiple for multi-source).
+    /// Capture handles for all sources.
     capture_handles: Vec<JoinHandle<()>>,
     /// Keep the capture streams alive - dropping them stops CPAL.
     #[allow(dead_code)]
     capture_streams: Vec<CaptureStream>,
+    /// Source IDs for event emission.
+    source_ids: Vec<SourceId>,
+    /// Event callback for SourceStopped events.
+    event_callback: Option<EventCallback>,
 }
 
 impl Session {
@@ -91,6 +95,8 @@ impl Session {
         router_handle: JoinHandle<()>,
         capture_handles: Vec<JoinHandle<()>>,
         capture_streams: Vec<CaptureStream>,
+        source_ids: Vec<SourceId>,
+        event_callback: Option<EventCallback>,
     ) -> Self {
         Self {
             state,
@@ -98,6 +104,8 @@ impl Session {
             router_handle: Some(router_handle),
             capture_handles,
             capture_streams,
+            source_ids,
+            event_callback,
         }
     }
 
@@ -160,6 +168,16 @@ impl Session {
                 .is_err()
             {
                 tracing::warn!("Router task did not complete within timeout");
+            }
+        }
+
+        // Emit SourceStopped events for all sources
+        if let Some(ref callback) = self.event_callback {
+            for source_id in &self.source_ids {
+                callback(StreamEvent::SourceStopped {
+                    source_id: source_id.clone(),
+                    reason: "session stopped".to_string(),
+                });
             }
         }
 

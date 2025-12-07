@@ -245,6 +245,18 @@ impl StreamAudioBuilder {
         self
     }
 
+    /// Set maximum pending merge windows.
+    ///
+    /// Limits merge backlog to N × `merge_window_duration`. Increase if sources
+    /// have significant clock drift. Default is 10 (~1 second at 100ms windows).
+    ///
+    /// When the limit is exceeded, oldest windows are evicted and emitted with
+    /// available data (missing sources filled with silence).
+    pub fn max_pending_windows(mut self, count: usize) -> Self {
+        self.config.max_pending_windows = count;
+        self
+    }
+
     /// Validates the builder configuration.
     fn validate(&self) -> Result<(), StreamAudioError> {
         if self.sources.is_empty() {
@@ -352,6 +364,8 @@ impl StreamAudioBuilder {
             router_handle,
             capture_handles,
             capture_streams,
+            self.source_ids(),
+            self.event_callback.clone(),
         ))
     }
 
