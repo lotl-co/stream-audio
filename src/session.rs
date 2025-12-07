@@ -110,11 +110,13 @@ impl Session {
     }
 
     /// Returns `true` if the session is still running.
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.state.running.load(Ordering::SeqCst)
     }
 
     /// Returns current session statistics.
+    #[must_use]
     pub fn stats(&self) -> SessionStats {
         SessionStats {
             chunks_processed: self.state.chunks_processed.load(Ordering::SeqCst),

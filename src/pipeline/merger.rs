@@ -294,6 +294,7 @@ pub struct MergeResult {
 
 impl MergeResult {
     /// Returns true if this merge was complete (all sources present).
+    #[must_use]
     pub fn is_complete(&self) -> bool {
         self.missing.is_empty()
     }
