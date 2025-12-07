@@ -178,7 +178,7 @@ impl Router {
             // Feed to merger if applicable
             if let Some(ref merger_mutex) = self.merger {
                 let mut merger = merger_mutex.lock().await;
-                let results = merger.add_chunk(Arc::new(chunk.clone()));
+                let results = merger.add_chunk(chunk);
                 drop(merger); // Release lock before async writes
 
                 for result in results {

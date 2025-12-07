@@ -50,8 +50,8 @@ pub struct TimeWindowMerger {
 
 /// A window awaiting completion.
 struct PendingWindow {
-    /// Chunks from each source.
-    chunks: HashMap<SourceId, Arc<AudioChunk>>,
+    /// Chunks from each source (cloned from input, sharing Arc samples).
+    chunks: HashMap<SourceId, AudioChunk>,
     /// When this window was created.
     created_at: Instant,
     /// The timestamp of this window.
@@ -109,7 +109,9 @@ impl TimeWindowMerger {
     ///
     /// Returns merge results for any completed or evicted windows.
     /// Empty vec if still waiting for other sources.
-    pub fn add_chunk(&mut self, chunk: Arc<AudioChunk>) -> Vec<MergeResult> {
+    ///
+    /// The chunk is cloned internally (cheap due to Arc-wrapped samples).
+    pub fn add_chunk(&mut self, chunk: &AudioChunk) -> Vec<MergeResult> {
         let Some(source_id) = chunk.source_id.as_ref() else {
             return Vec::new();
         };
@@ -126,7 +128,7 @@ impl TimeWindowMerger {
                 ),
             });
 
-        window.chunks.insert(source_id.clone(), chunk);
+        window.chunks.insert(source_id.clone(), chunk.clone());
 
         let mut results = Vec::new();
 
@@ -231,7 +233,7 @@ impl TimeWindowMerger {
     /// `MergeMode` enum to make this configurable.
     fn merge_chunks(
         &self,
-        chunks: &HashMap<SourceId, Arc<AudioChunk>>,
+        chunks: &HashMap<SourceId, AudioChunk>,
         timestamp: Duration,
     ) -> AudioChunk {
         if chunks.is_empty() {
@@ -325,14 +327,15 @@ impl MergeResult {
 mod tests {
     use super::*;
 
-    fn make_chunk(source: &str, timestamp_ms: u64, samples: Vec<i16>) -> Arc<AudioChunk> {
-        Arc::new(AudioChunk::with_source(
+    /// Creates a test chunk with the given source, timestamp, and samples.
+    fn make_chunk(source: &str, timestamp_ms: u64, samples: Vec<i16>) -> AudioChunk {
+        AudioChunk::with_source(
             samples,
             Duration::from_millis(timestamp_ms),
             16000,
             1,
             SourceId::new(source),
-        ))
+        )
     }
 
     #[test]
@@ -347,12 +350,12 @@ mod tests {
 
         // Add mic chunk for window 0 (0-100ms)
         let mic_chunk = make_chunk("mic", 50, vec![100, 200, 300]);
-        let results = merger.add_chunk(mic_chunk);
+        let results = merger.add_chunk(&mic_chunk);
         assert!(results.is_empty()); // Not complete yet
 
         // Add speaker chunk for same window
         let speaker_chunk = make_chunk("speaker", 50, vec![50, 100, 150]);
-        let results = merger.add_chunk(speaker_chunk);
+        let results = merger.add_chunk(&speaker_chunk);
         assert_eq!(results.len(), 1); // Complete!
 
         let result = &results[0];
@@ -374,11 +377,11 @@ mod tests {
 
         // Add chunks to different windows
         let mic_chunk = make_chunk("mic", 50, vec![100]); // Window 0
-        let results = merger.add_chunk(mic_chunk);
+        let results = merger.add_chunk(&mic_chunk);
         assert!(results.is_empty());
 
         let speaker_chunk = make_chunk("speaker", 150, vec![200]); // Window 1
-        let results = merger.add_chunk(speaker_chunk);
+        let results = merger.add_chunk(&speaker_chunk);
         assert!(results.is_empty());
 
         // Both windows still pending
@@ -397,7 +400,7 @@ mod tests {
 
         // Add only mic chunk
         let mic_chunk = make_chunk("mic", 50, vec![100, 200]);
-        merger.add_chunk(mic_chunk);
+        merger.add_chunk(&mic_chunk);
 
         // Check timeouts - should emit incomplete window
         let results = merger.check_timeouts();
@@ -463,7 +466,7 @@ mod tests {
         );
 
         // Add only one source - window stays pending
-        merger.add_chunk(make_chunk("mic", 50, vec![100]));
+        merger.add_chunk(&make_chunk("mic", 50, vec![100]));
         assert_eq!(merger.pending_count(), 1);
 
         merger.clear();
@@ -483,12 +486,12 @@ mod tests {
         );
 
         // Add chunks to windows 0, 1 (from mic only - incomplete)
-        merger.add_chunk(make_chunk("mic", 50, vec![100])); // Window 0
-        merger.add_chunk(make_chunk("mic", 150, vec![200])); // Window 1
+        merger.add_chunk(&make_chunk("mic", 50, vec![100])); // Window 0
+        merger.add_chunk(&make_chunk("mic", 150, vec![200])); // Window 1
         assert_eq!(merger.pending_count(), 2);
 
         // Add chunk to window 2 - should evict window 0
-        let results = merger.add_chunk(make_chunk("mic", 250, vec![300])); // Window 2
+        let results = merger.add_chunk(&make_chunk("mic", 250, vec![300])); // Window 2
         assert_eq!(results.len(), 1); // Window 0 evicted
         assert_eq!(results[0].window_id, 0);
         assert!(!results[0].is_complete()); // Missing speaker
