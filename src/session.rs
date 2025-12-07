@@ -13,6 +13,9 @@ use crate::{EventCallback, StreamAudioError, StreamEvent};
 /// Default timeout for graceful shutdown operations.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Reason string for `SourceStopped` event when session is explicitly stopped.
+const STOP_REASON_SESSION_STOPPED: &str = "session stopped";
+
 /// Statistics about a recording session.
 #[derive(Debug, Clone, Default)]
 pub struct SessionStats {
@@ -178,7 +181,7 @@ impl Session {
             for source_id in &self.source_ids {
                 callback(StreamEvent::SourceStopped {
                     source_id: source_id.clone(),
-                    reason: "session stopped".to_string(),
+                    reason: STOP_REASON_SESSION_STOPPED.to_string(),
                 });
             }
         }
