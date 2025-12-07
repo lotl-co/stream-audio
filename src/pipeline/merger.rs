@@ -265,7 +265,13 @@ impl TimeWindowMerger {
         // Divide by total expected sources to maintain consistent volume.
         // Missing sources contribute silence (0), but we still count them in
         // the divisor to prevent volume spikes when sources drop.
-        let divisor = count.max(self.expected_sources.len());
+        debug_assert!(
+            count <= self.expected_sources.len(),
+            "More sources contributed than expected: {} > {}",
+            count,
+            self.expected_sources.len()
+        );
+        let divisor = self.expected_sources.len();
 
         let samples = average_and_clamp(&merged, divisor);
 

@@ -89,7 +89,7 @@ pub struct Session {
 
 impl Session {
     /// Creates a new session with capture sources.
-    pub(crate) fn new_multi(
+    pub(crate) fn new(
         state: Arc<SessionState>,
         router_cmd_tx: mpsc::Sender<RouterCommand>,
         router_handle: JoinHandle<()>,

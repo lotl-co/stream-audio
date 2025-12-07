@@ -369,7 +369,7 @@ impl StreamAudioBuilder {
             capture_streams.push(capture_stream);
         }
 
-        Ok(Session::new_multi(
+        Ok(Session::new(
             state,
             router_cmd_tx,
             router_handle,
