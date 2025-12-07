@@ -58,32 +58,7 @@ struct PendingWindow {
     timestamp: Duration,
 }
 
-/// Default max pending windows if not specified.
-/// Used by `new()` convenience constructor.
-#[allow(dead_code)]
-const DEFAULT_MAX_PENDING: usize = 10;
-
 impl TimeWindowMerger {
-    /// Creates a new merger for the given sources with default max pending.
-    ///
-    /// Convenience constructor for tests. Production code uses `with_max_pending()`.
-    #[allow(dead_code)]
-    pub fn new(
-        window_duration: Duration,
-        window_timeout: Duration,
-        expected_sources: Vec<SourceId>,
-        sample_rate: u32,
-        channels: u16,
-    ) -> Self {
-        Self::with_max_pending(
-            window_duration,
-            window_timeout,
-            expected_sources,
-            sample_rate,
-            channels,
-            DEFAULT_MAX_PENDING,
-        )
-    }
 
     /// Creates a new merger with a custom max pending window limit.
     pub fn with_max_pending(
@@ -292,14 +267,14 @@ impl TimeWindowMerger {
         )
     }
 
-    /// Returns the number of pending windows (for testing/debugging).
-    #[allow(dead_code)]
+    /// Returns the number of pending windows (test helper).
+    #[cfg(test)]
     pub fn pending_count(&self) -> usize {
         self.pending.len()
     }
 
-    /// Clears all pending windows (for testing/cleanup).
-    #[allow(dead_code)]
+    /// Clears all pending windows (test helper).
+    #[cfg(test)]
     pub fn clear(&mut self) {
         self.pending.clear();
     }
@@ -326,6 +301,29 @@ impl MergeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Default max pending windows for tests (~1 second at 100ms windows).
+    const DEFAULT_MAX_PENDING: usize = 10;
+
+    impl TimeWindowMerger {
+        /// Creates a merger with default max pending (test helper).
+        fn new(
+            window_duration: Duration,
+            window_timeout: Duration,
+            expected_sources: Vec<SourceId>,
+            sample_rate: u32,
+            channels: u16,
+        ) -> Self {
+            Self::with_max_pending(
+                window_duration,
+                window_timeout,
+                expected_sources,
+                sample_rate,
+                channels,
+                DEFAULT_MAX_PENDING,
+            )
+        }
+    }
 
     /// Creates a test chunk with the given source, timestamp, and samples.
     fn make_chunk(source: &str, timestamp_ms: u64, samples: Vec<i16>) -> AudioChunk {

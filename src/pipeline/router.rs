@@ -30,10 +30,8 @@ pub struct Router {
 }
 
 impl Router {
-    /// Creates a new router with the given sinks (simple mode without routing).
-    ///
-    /// Used by tests for simple scenarios. For production use, use `with_routing()`.
-    #[allow(dead_code)]
+    /// Creates a new router with the given sinks (simple mode, test helper).
+    #[cfg(test)]
     pub fn new(sinks: Vec<Arc<dyn Sink>>, config: StreamConfig) -> Self {
         Self {
             sinks,
@@ -89,12 +87,6 @@ impl Router {
     pub fn with_event_callback(mut self, callback: EventCallback) -> Self {
         self.event_callback = Some(callback);
         self
-    }
-
-    /// Returns true if this is a multi-source router (for introspection).
-    #[allow(dead_code)]
-    pub fn is_multi_source(&self) -> bool {
-        self.routing_table.is_some()
     }
 
     /// Sends an event to the callback if configured.

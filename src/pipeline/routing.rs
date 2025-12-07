@@ -34,12 +34,6 @@ impl Default for SinkRoute {
 }
 
 impl SinkRoute {
-    /// Creates a route for a single source.
-    #[allow(dead_code)] // Public API for external use
-    pub fn single(source_id: impl Into<SourceId>) -> Self {
-        Self::Single(source_id.into())
-    }
-
     /// Creates a route for merged sources.
     pub fn merged<I, S>(sources: I) -> Self
     where
@@ -49,8 +43,14 @@ impl SinkRoute {
         Self::Merged(sources.into_iter().map(Into::into).collect())
     }
 
-    /// Returns true if this route wants chunks from the given source.
-    #[allow(dead_code)] // Public API for external use
+    /// Creates a route for a single source (test helper).
+    #[cfg(test)]
+    pub fn single(source_id: impl Into<SourceId>) -> Self {
+        Self::Single(source_id.into())
+    }
+
+    /// Returns true if this route wants chunks from the given source (test helper).
+    #[cfg(test)]
     pub fn wants_source(&self, source_id: &SourceId) -> bool {
         match self {
             Self::Broadcast => true,
@@ -59,19 +59,10 @@ impl SinkRoute {
         }
     }
 
-    /// Returns true if this is a merge route.
-    #[allow(dead_code)] // Public API for external use
+    /// Returns true if this is a merge route (test helper).
+    #[cfg(test)]
     pub fn is_merged(&self) -> bool {
         matches!(self, Self::Merged(_))
-    }
-
-    /// Returns the set of source IDs this route needs, if known.
-    #[allow(dead_code)] // Public API for external use
-    pub fn required_sources(&self) -> Option<&HashSet<SourceId>> {
-        match self {
-            Self::Merged(ids) => Some(ids),
-            _ => None,
-        }
     }
 }
 
@@ -89,10 +80,6 @@ pub struct RoutingTable {
 
     /// Merge configurations: (source set, sink indices).
     merge_groups: Vec<MergeGroup>,
-
-    /// All known source IDs (for introspection).
-    #[allow(dead_code)]
-    source_ids: HashSet<SourceId>,
 }
 
 /// A group of sources that are merged and sent to specific sinks.
@@ -173,7 +160,6 @@ impl RoutingTable {
             direct_routes,
             broadcast_sinks,
             merge_groups,
-            source_ids,
         })
     }
 
@@ -192,21 +178,9 @@ impl RoutingTable {
         &self.merge_groups
     }
 
-    /// Returns all known source IDs (for introspection).
-    #[allow(dead_code)]
-    pub fn source_ids(&self) -> &HashSet<SourceId> {
-        &self.source_ids
-    }
-
     /// Returns true if there are any merge routes.
     pub fn has_merge_routes(&self) -> bool {
         !self.merge_groups.is_empty()
-    }
-
-    /// Returns true if this is a single-source setup (backward compatibility).
-    #[allow(dead_code)]
-    pub fn is_single_source(&self) -> bool {
-        self.source_ids.len() <= 1
     }
 }
 
