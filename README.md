@@ -94,6 +94,12 @@ guarantees that audio capture never blocks even under backpressure.
 
 **Key invariant:** The CPAL callback never waits. If sinks are slow, the ring buffer absorbs pressure.
 
+## Limitations
+
+**WAV file size:** WAV files are limited to ~4GB due to 32-bit size headers. At 16kHz mono (default), this allows ~37 hours of recording. For longer sessions, consider splitting files or using a streaming sink.
+
+**Resampling:** When the device sample rate differs from the target format, linear interpolation is used for resampling. This is optimized for low-latency real-time capture rather than maximum audio fidelity. For high-quality offline resampling, process the raw device output externally.
+
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
