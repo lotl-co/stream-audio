@@ -217,8 +217,8 @@ impl Sink for FileSink {
     }
 
     async fn write(&self, chunk: &AudioChunk) -> Result<(), SinkError> {
-        // Clone data for the blocking task
-        let samples = chunk.samples.clone();
+        // Clone Arc for the blocking task (cheap - just reference count increment)
+        let samples = Arc::clone(&chunk.samples);
         let sample_rate = chunk.sample_rate;
         let channels = chunk.channels;
         let state = Arc::clone(&self.state);

@@ -7,11 +7,14 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::pipeline::RouterCommand;
-use crate::source::CaptureStream;
-use crate::StreamAudioError;
+use crate::source::{CaptureStream, SourceId};
+use crate::{EventCallback, StreamAudioError, StreamEvent};
 
 /// Default timeout for graceful shutdown operations.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Reason string for `SourceStopped` event when session is explicitly stopped.
+const STOP_REASON_SESSION_STOPPED: &str = "session stopped";
 
 /// Statistics about a recording session.
 #[derive(Debug, Clone, Default)]
@@ -76,36 +79,47 @@ pub struct Session {
     state: Arc<SessionState>,
     router_cmd_tx: mpsc::Sender<RouterCommand>,
     router_handle: Option<JoinHandle<()>>,
-    capture_handle: Option<JoinHandle<()>>,
-    // Keep the capture stream alive - dropping it stops CPAL
+    /// Capture handles for all sources.
+    capture_handles: Vec<JoinHandle<()>>,
+    /// Keep the capture streams alive - dropping them stops CPAL.
     #[allow(dead_code)]
-    capture_stream: CaptureStream,
+    capture_streams: Vec<CaptureStream>,
+    /// Source IDs for event emission.
+    source_ids: Vec<SourceId>,
+    /// Event callback for `SourceStopped` events.
+    event_callback: Option<EventCallback>,
 }
 
 impl Session {
-    /// Creates a new session with the given handles.
+    /// Creates a new session with capture sources.
     pub(crate) fn new(
         state: Arc<SessionState>,
         router_cmd_tx: mpsc::Sender<RouterCommand>,
         router_handle: JoinHandle<()>,
-        capture_handle: JoinHandle<()>,
-        capture_stream: CaptureStream,
+        capture_handles: Vec<JoinHandle<()>>,
+        capture_streams: Vec<CaptureStream>,
+        source_ids: Vec<SourceId>,
+        event_callback: Option<EventCallback>,
     ) -> Self {
         Self {
             state,
             router_cmd_tx,
             router_handle: Some(router_handle),
-            capture_handle: Some(capture_handle),
-            capture_stream,
+            capture_handles,
+            capture_streams,
+            source_ids,
+            event_callback,
         }
     }
 
     /// Returns `true` if the session is still running.
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.state.running.load(Ordering::SeqCst)
     }
 
     /// Returns current session statistics.
+    #[must_use]
     pub fn stats(&self) -> SessionStats {
         SessionStats {
             chunks_processed: self.state.chunks_processed.load(Ordering::SeqCst),
@@ -142,8 +156,8 @@ impl Session {
         )
         .await;
 
-        // Wait for capture task with timeout
-        if let Some(handle) = self.capture_handle.take() {
+        // Wait for all capture tasks with timeout
+        for handle in self.capture_handles.drain(..) {
             if tokio::time::timeout(SHUTDOWN_TIMEOUT, handle)
                 .await
                 .is_err()
@@ -162,6 +176,16 @@ impl Session {
             }
         }
 
+        // Emit SourceStopped events for all sources
+        if let Some(ref callback) = self.event_callback {
+            for source_id in &self.source_ids {
+                callback(StreamEvent::SourceStopped {
+                    source_id: source_id.clone(),
+                    reason: STOP_REASON_SESSION_STOPPED.to_string(),
+                });
+            }
+        }
+
         Ok(())
     }
 
@@ -177,13 +201,13 @@ impl Session {
         let _ = self.router_cmd_tx.try_send(RouterCommand::Stop);
 
         // Take the handles so the tasks can be cleaned up in background
-        let capture_handle = self.capture_handle.take();
+        let capture_handles: Vec<_> = self.capture_handles.drain(..).collect();
         let router_handle = self.router_handle.take();
 
         // Spawn a detached cleanup task
         tokio::spawn(async move {
-            // Wait briefly for tasks to finish
-            if let Some(handle) = capture_handle {
+            // Wait briefly for all capture tasks to finish
+            for handle in capture_handles {
                 if tokio::time::timeout(SHUTDOWN_TIMEOUT, handle)
                     .await
                     .is_err()

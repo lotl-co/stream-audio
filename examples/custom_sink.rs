@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicI16, AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use stream_audio::{AudioChunk, FormatPreset, Sink, SinkError, StreamAudio};
+use stream_audio::{AudioChunk, AudioSource, FormatPreset, Sink, SinkError, StreamAudio};
 
 /// A custom sink that computes audio statistics in real-time.
 struct StatsSink {
@@ -54,7 +54,7 @@ impl Sink for StatsSink {
             .fetch_add(chunk.samples.len() as u64, Ordering::Relaxed);
 
         // Update min/max (approximate - may miss updates under contention)
-        for &sample in &chunk.samples {
+        for &sample in chunk.samples.iter() {
             // Update minimum
             let mut current_min = self.min_sample.load(Ordering::Relaxed);
             while sample < current_min {
@@ -106,6 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stats_sink = StatsSink::new("audio-stats");
 
     let session = StreamAudio::builder()
+        .add_source("default", AudioSource::default_device())
         .format(FormatPreset::Transcription)
         .add_sink(stats_sink)
         .start()

@@ -53,7 +53,7 @@ async fn test_channel_sink_receives_data() {
 
     // Receive it
     let received = rx.recv().await.unwrap();
-    assert_eq!(received.samples, vec![1, 2, 3, 4, 5]);
+    assert_eq!(*received.samples, vec![1, 2, 3, 4, 5]);
     assert_eq!(received.sample_rate, 16000);
     assert_eq!(received.channels, 1);
 }
@@ -105,7 +105,7 @@ async fn test_multiple_sinks() {
 
     // Verify both received
     let received = rx.recv().await.unwrap();
-    assert_eq!(received.samples, vec![100, 200, 300]);
+    assert_eq!(*received.samples, vec![100, 200, 300]);
     assert_eq!(counting_sink.count(), 1);
 }
 

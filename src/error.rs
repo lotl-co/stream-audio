@@ -73,6 +73,24 @@ pub enum StreamAudioError {
     /// An error from the underlying audio library (CPAL).
     #[error("audio backend error: {0}")]
     BackendError(String),
+
+    /// No sources were configured before starting (multi-source mode).
+    #[error("no sources configured - use add_source() to add at least one audio source before calling start()")]
+    NoSourcesConfigured,
+
+    /// A sink route references an unknown source ID.
+    #[error("unknown source in route: {source_id}")]
+    UnknownSourceInRoute {
+        /// The source ID that wasn't found.
+        source_id: String,
+    },
+
+    /// A source ID was used more than once.
+    #[error("duplicate source ID: {source_id}")]
+    DuplicateSourceId {
+        /// The duplicated source ID.
+        source_id: String,
+    },
 }
 
 /// Errors that can occur within a [`Sink`](crate::Sink) implementation.

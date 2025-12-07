@@ -77,7 +77,7 @@ mod tests {
         sink.write(&chunk).await.unwrap();
 
         let received = rx.recv().await.unwrap();
-        assert_eq!(received.samples, vec![1, 2, 3]);
+        assert_eq!(*received.samples, vec![1, 2, 3]);
     }
 
     #[tokio::test]

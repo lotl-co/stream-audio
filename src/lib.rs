@@ -11,12 +11,14 @@
 //! ## Quick Start
 //!
 //! ```rust,ignore
-//! use stream_audio::{StreamAudio, FileSink, ChannelSink, FormatPreset};
+//! use stream_audio::{StreamAudio, AudioSource, FileSink, ChannelSink, FormatPreset};
 //! use tokio::sync::mpsc;
 //!
-//! let (tx, rx) = mpsc::channel::<AudioChunk>(100);
+//! // User channel capacity: size based on your consumer's processing speed
+//! let (tx, rx) = mpsc::channel::<AudioChunk>(32);
 //!
 //! let session = StreamAudio::builder()
+//!     .add_source("mic", AudioSource::default_device())
 //!     .format(FormatPreset::Transcription)           // 16kHz mono
 //!     .add_sink(FileSink::wav("meeting.wav"))
 //!     .add_sink(ChannelSink::new(tx))
@@ -69,7 +71,7 @@ mod session;
 mod sink;
 pub mod source;
 
-pub use builder::{DeviceSelection, StreamAudio, StreamAudioBuilder};
+pub use builder::{AudioSource, StreamAudio, StreamAudioBuilder};
 pub use chunk::AudioChunk;
 pub use config::{FormatPreset, StreamConfig};
 pub use error::{SinkError, StreamAudioError};
@@ -77,5 +79,5 @@ pub use event::{event_callback, EventCallback, StreamEvent};
 pub use session::{Session, SessionStats};
 pub use sink::{ChannelSink, FileSink, Sink};
 pub use source::{
-    default_input_device_name, list_input_devices, AudioDevice, DeviceConfig, MockSource,
+    default_input_device_name, list_input_devices, AudioDevice, DeviceConfig, MockSource, SourceId,
 };

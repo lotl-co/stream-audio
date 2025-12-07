@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 use crate::format::FormatConverter;
 use crate::pipeline::AudioBuffer;
 use crate::session::SessionState;
+use crate::source::SourceId;
 use crate::AudioChunk;
 
 /// Configuration for the capture bridge task.
@@ -30,6 +31,8 @@ pub struct CaptureConfig {
     pub target_channels: u16,
     /// Duration of each chunk
     pub chunk_duration: Duration,
+    /// Source identifier for multi-source capture (None for single-source).
+    pub source_id: Option<SourceId>,
 }
 
 /// The capture bridge reads audio from the ring buffer and forwards converted chunks.
@@ -47,6 +50,8 @@ pub struct CaptureBridge {
     target_sample_rate: u32,
     target_channels: u16,
     poll_interval: Duration,
+    /// Source identifier for multi-source capture.
+    source_id: Option<SourceId>,
 }
 
 impl CaptureBridge {
@@ -82,6 +87,7 @@ impl CaptureBridge {
             target_sample_rate: config.target_sample_rate,
             target_channels: config.target_channels,
             poll_interval,
+            source_id: config.source_id.clone(),
         }
     }
 
@@ -137,12 +143,22 @@ impl CaptureBridge {
     ) -> AudioChunk {
         let converted_samples = self.converter.convert(&device_chunk.samples);
 
-        let chunk = AudioChunk::new(
-            converted_samples,
-            *output_timestamp,
-            self.target_sample_rate,
-            self.target_channels,
-        );
+        let chunk = if let Some(ref source_id) = self.source_id {
+            AudioChunk::with_source(
+                converted_samples,
+                *output_timestamp,
+                self.target_sample_rate,
+                self.target_channels,
+                source_id.clone(),
+            )
+        } else {
+            AudioChunk::new(
+                converted_samples,
+                *output_timestamp,
+                self.target_sample_rate,
+                self.target_channels,
+            )
+        };
 
         *output_timestamp += chunk.duration();
         chunk
@@ -181,9 +197,24 @@ mod tests {
             target_sample_rate: 16000,
             target_channels: 1,
             chunk_duration: Duration::from_millis(100),
+            source_id: None,
         };
 
         assert_eq!(config.device_sample_rate, 48000);
         assert_eq!(config.target_sample_rate, 16000);
+    }
+
+    #[test]
+    fn test_capture_config_with_source_id() {
+        let config = CaptureConfig {
+            device_sample_rate: 48000,
+            device_channels: 2,
+            target_sample_rate: 16000,
+            target_channels: 1,
+            chunk_duration: Duration::from_millis(100),
+            source_id: Some(SourceId::new("mic")),
+        };
+
+        assert_eq!(config.source_id.as_ref().unwrap().as_str(), "mic");
     }
 }

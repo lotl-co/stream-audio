@@ -81,7 +81,38 @@ pub struct StreamConfig {
     /// Uses exponential backoff (delay doubles each attempt).
     /// Default: 100ms
     pub sink_retry_delay: Duration,
+
+    /// Duration of merge windows for multi-source capture.
+    ///
+    /// When multiple sources are merged, chunks are aligned by timestamp
+    /// into windows of this duration. Should typically match `chunk_duration`.
+    /// Default: 100ms
+    pub merge_window_duration: Duration,
+
+    /// Timeout for incomplete merge windows.
+    ///
+    /// If a merge window doesn't receive chunks from all sources within
+    /// this duration, it will be emitted with available sources only
+    /// (missing sources filled with silence) and a [`StreamEvent::MergeIncomplete`]
+    /// event is emitted.
+    /// Default: 200ms
+    ///
+    /// [`StreamEvent::MergeIncomplete`]: crate::StreamEvent::MergeIncomplete
+    pub merge_window_timeout: Duration,
+
+    /// Maximum pending merge windows before oldest is evicted.
+    ///
+    /// Limits merge backlog to N × `merge_window_duration`. Increase if sources
+    /// have significant clock drift. Evicted windows emit with available data
+    /// and a [`StreamEvent::MergeIncomplete`] event.
+    /// Default: 10 (~1 second at 100ms windows)
+    ///
+    /// [`StreamEvent::MergeIncomplete`]: crate::StreamEvent::MergeIncomplete
+    pub max_pending_windows: usize,
 }
+
+/// Default maximum pending windows (~1 second at 100ms windows).
+const DEFAULT_MAX_PENDING_WINDOWS: usize = 10;
 
 impl Default for StreamConfig {
     fn default() -> Self {
@@ -90,6 +121,9 @@ impl Default for StreamConfig {
             ring_buffer_duration: Duration::from_secs(30),
             sink_retry_attempts: 3,
             sink_retry_delay: Duration::from_millis(100),
+            merge_window_duration: Duration::from_millis(100),
+            merge_window_timeout: Duration::from_millis(200),
+            max_pending_windows: DEFAULT_MAX_PENDING_WINDOWS,
         }
     }
 }
@@ -124,5 +158,8 @@ mod tests {
         assert_eq!(config.ring_buffer_duration, Duration::from_secs(30));
         assert_eq!(config.sink_retry_attempts, 3);
         assert_eq!(config.sink_retry_delay, Duration::from_millis(100));
+        assert_eq!(config.merge_window_duration, Duration::from_millis(100));
+        assert_eq!(config.merge_window_timeout, Duration::from_millis(200));
+        assert_eq!(config.max_pending_windows, 10);
     }
 }

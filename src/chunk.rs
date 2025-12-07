@@ -1,11 +1,17 @@
 //! Audio data chunk with metadata.
 
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::source::SourceId;
 
 /// A discrete buffer of audio samples with associated metadata.
 ///
 /// `AudioChunk` is the fundamental unit of audio data passed through the pipeline.
 /// Each chunk contains PCM samples along with timing and format information.
+///
+/// Samples are stored in an `Arc<Vec<i16>>` for efficient zero-copy sharing
+/// between multiple sinks.
 ///
 /// # Example
 ///
@@ -13,19 +19,18 @@ use std::time::Duration;
 /// use stream_audio::AudioChunk;
 /// use std::time::Duration;
 ///
-/// let chunk = AudioChunk {
-///     samples: vec![0i16; 1600],  // 100ms at 16kHz
-///     timestamp: Duration::from_millis(0),
-///     sample_rate: 16000,
-///     channels: 1,
-/// };
-///
+/// let chunk = AudioChunk::new(vec![0i16; 1600], Duration::from_millis(0), 16000, 1);
 /// assert_eq!(chunk.duration(), Duration::from_millis(100));
+///
+/// // Samples are Arc-wrapped for efficient sharing
+/// let chunk2 = chunk.clone();  // Cheap clone - shares sample data
 /// ```
 #[derive(Debug, Clone)]
 pub struct AudioChunk {
     /// PCM audio samples in 16-bit signed integer format.
-    pub samples: Vec<i16>,
+    ///
+    /// Wrapped in `Arc` for zero-copy sharing between sinks.
+    pub samples: Arc<Vec<i16>>,
 
     /// Timestamp from the start of the recording session.
     pub timestamp: Duration,
@@ -35,16 +40,62 @@ pub struct AudioChunk {
 
     /// Number of audio channels (1 = mono, 2 = stereo).
     pub channels: u16,
+
+    /// Source identifier for multi-source capture.
+    ///
+    /// `None` for merged chunks or single-source capture (backward compatibility).
+    pub source_id: Option<SourceId>,
 }
 
 impl AudioChunk {
     /// Creates a new `AudioChunk` with the given parameters.
+    ///
+    /// For single-source capture, `source_id` is set to `None`.
     pub fn new(samples: Vec<i16>, timestamp: Duration, sample_rate: u32, channels: u16) -> Self {
+        Self {
+            samples: Arc::new(samples),
+            timestamp,
+            sample_rate,
+            channels,
+            source_id: None,
+        }
+    }
+
+    /// Creates a new `AudioChunk` with a source identifier.
+    ///
+    /// Used in multi-source capture to identify which device produced the audio.
+    pub fn with_source(
+        samples: Vec<i16>,
+        timestamp: Duration,
+        sample_rate: u32,
+        channels: u16,
+        source_id: SourceId,
+    ) -> Self {
+        Self {
+            samples: Arc::new(samples),
+            timestamp,
+            sample_rate,
+            channels,
+            source_id: Some(source_id),
+        }
+    }
+
+    /// Creates a new `AudioChunk` from pre-wrapped Arc samples.
+    ///
+    /// Useful when creating merged chunks or when samples are already Arc-wrapped.
+    pub fn from_arc(
+        samples: Arc<Vec<i16>>,
+        timestamp: Duration,
+        sample_rate: u32,
+        channels: u16,
+        source_id: Option<SourceId>,
+    ) -> Self {
         Self {
             samples,
             timestamp,
             sample_rate,
             channels,
+            source_id,
         }
     }
 
