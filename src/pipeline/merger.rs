@@ -48,6 +48,17 @@ pub struct TimeWindowMerger {
     max_pending: usize,
 }
 
+/// Averages accumulated samples and clamps to i16 range.
+fn average_and_clamp(accumulated: &[i32], divisor: usize) -> Vec<i16> {
+    accumulated
+        .iter()
+        .map(|&sum| {
+            let avg = sum / divisor as i32;
+            avg.clamp(-32768, 32767) as i16
+        })
+        .collect()
+}
+
 /// A window awaiting completion.
 struct PendingWindow {
     /// Chunks from each source (cloned from input, sharing Arc samples).
@@ -244,19 +255,9 @@ impl TimeWindowMerger {
         // Divide by total expected sources to maintain consistent volume.
         // Missing sources contribute silence (0), but we still count them in
         // the divisor to prevent volume spikes when sources drop.
-        let total_sources = self.expected_sources.len();
-        if count < total_sources {
-            count = total_sources;
-        }
+        let divisor = count.max(self.expected_sources.len());
 
-        // Average and clamp to i16 range
-        let samples: Vec<i16> = merged
-            .iter()
-            .map(|&s| {
-                let avg = s / count as i32;
-                avg.clamp(-32768, 32767) as i16
-            })
-            .collect();
+        let samples = average_and_clamp(&merged, divisor);
 
         AudioChunk::from_arc(
             Arc::new(samples),
