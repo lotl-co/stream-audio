@@ -6,48 +6,96 @@
 //! Run with: cargo run --example multi
 //!
 //! Note: This example requires two audio input devices to be available.
-//! If you only have one device, modify the example to use MockSource.
 
+use std::io::{self, Write};
 use std::time::Duration;
 use stream_audio::{
     AudioChunk, AudioSource, ChannelSink, FileSink, FormatPreset, StreamAudio, StreamEvent,
 };
 use tokio::sync::mpsc;
 
+/// Prompts user to select a device from the list.
+fn select_device(devices: &[String], prompt: &str) -> Option<String> {
+    println!("\n{prompt}");
+    println!("  0. System default");
+    for (i, device) in devices.iter().enumerate() {
+        println!("  {}. {}", i + 1, device);
+    }
+
+    print!("Enter selection: ");
+    io::stdout().flush().ok()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).ok()?;
+
+    let selection: usize = input.trim().parse().ok()?;
+
+    if selection == 0 {
+        None // Use default
+    } else {
+        devices.get(selection - 1).cloned()
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     // List available devices
+    let devices = stream_audio::list_input_devices().unwrap_or_default();
+
+    println!("=== Multi-Source Audio Capture ===\n");
     println!("Available input devices:");
-    if let Ok(devices) = stream_audio::list_input_devices() {
-        for device in devices {
-            println!("  - {device}");
-        }
+    for device in &devices {
+        println!("  - {device}");
     }
-    println!();
+
+    if devices.is_empty() {
+        eprintln!("No input devices found!");
+        return Ok(());
+    }
+
+    // Prompt user to select devices
+    let mic_device = select_device(&devices, "Select MICROPHONE source:");
+    let speaker_device = select_device(&devices, "Select SPEAKER/SYSTEM source:");
+
+    // Build sources based on selection
+    let mic_source = match &mic_device {
+        Some(name) => AudioSource::device(name),
+        None => AudioSource::default_device(),
+    };
+
+    let speaker_source = match &speaker_device {
+        Some(name) => AudioSource::device(name),
+        None => AudioSource::default_device(),
+    };
+
+    println!("\nConfiguration:");
+    println!(
+        "  Mic: {}",
+        mic_device.as_deref().unwrap_or("(system default)")
+    );
+    println!(
+        "  Speaker: {}",
+        speaker_device.as_deref().unwrap_or("(system default)")
+    );
 
     // Create channels for real-time processing
     let (mic_tx, mut mic_rx) = mpsc::channel::<AudioChunk>(100);
     let (speaker_tx, mut speaker_rx) = mpsc::channel::<AudioChunk>(100);
 
-    // For demonstration, we'll use the default device for both sources.
-    // In a real application, you'd use different devices:
-    //   .add_source("mic", AudioSource::device("MacBook Pro Microphone"))
-    //   .add_source("speaker", AudioSource::device("BlackHole 2ch"))
-
-    println!("Starting multi-source capture...");
+    println!("\nStarting multi-source capture...");
     println!("Recording for 5 seconds with:");
-    println!("  - Microphone → mic.wav + transcription channel");
-    println!("  - Speaker → speaker.wav + transcription channel");
-    println!("  - Merged → merged.wav");
+    println!("  - Microphone -> mic.wav + transcription channel");
+    println!("  - Speaker -> speaker.wav + transcription channel");
+    println!("  - Merged -> merged.wav");
     println!();
 
     // Start multi-source capture
     let session = StreamAudio::builder()
         // Add sources with IDs
-        .add_source("mic", AudioSource::default_device())
-        .add_source("speaker", AudioSource::default_device())
+        .add_source("mic", mic_source)
+        .add_source("speaker", speaker_source)
         // Route sinks to specific sources
         .add_sink_from(FileSink::wav("mic.wav"), "mic")
         .add_sink_from(FileSink::wav("speaker.wav"), "speaker")
