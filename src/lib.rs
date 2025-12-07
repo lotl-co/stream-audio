@@ -14,6 +14,7 @@
 //! use stream_audio::{StreamAudio, AudioSource, FileSink, ChannelSink, FormatPreset};
 //! use tokio::sync::mpsc;
 //!
+//! // User channel capacity: size based on your consumer's processing speed
 //! let (tx, rx) = mpsc::channel::<AudioChunk>(32);
 //!
 //! let session = StreamAudio::builder()

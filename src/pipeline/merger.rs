@@ -271,7 +271,7 @@ impl TimeWindowMerger {
             count,
             self.expected_sources.len()
         );
-        let divisor = self.expected_sources.len();
+        let divisor = self.expected_sources.len().max(count);
 
         let samples = average_and_clamp(&merged, divisor);
 

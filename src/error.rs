@@ -75,7 +75,7 @@ pub enum StreamAudioError {
     BackendError(String),
 
     /// No sources were configured before starting (multi-source mode).
-    #[error("no sources configured - add at least one source")]
+    #[error("no sources configured - use add_source() to add at least one audio source before calling start()")]
     NoSourcesConfigured,
 
     /// A sink route references an unknown source ID.
