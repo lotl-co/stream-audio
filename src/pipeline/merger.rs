@@ -70,7 +70,6 @@ struct PendingWindow {
 }
 
 impl TimeWindowMerger {
-
     /// Creates a new merger with a custom max pending window limit.
     pub fn with_max_pending(
         window_duration: Duration,
