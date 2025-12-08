@@ -23,13 +23,28 @@ Real-time audio capture with multi-sink architecture.
 
 stream-audio handles all of this so you can focus on what to do with the audio, not how to capture it reliably.
 
-## Features
+## Installation
 
-- Non-blocking audio capture via CPAL
-- Multiple simultaneous destinations (file, channel, custom)
-- Resilient buffering - never drops audio due to slow consumers
-- Simple builder API with sensible defaults
-- Fully async with Tokio
+```bash
+cargo add stream-audio
+```
+
+For system audio capture (loopback), enable the `system-audio` feature:
+
+```bash
+cargo add stream-audio --features system-audio
+```
+
+**MSRV:** Rust 1.75+
+
+## Platform Support
+
+| Feature | macOS | Windows | Linux |
+|---------|-------|---------|-------|
+| Microphone capture | ✅ | ✅ | ✅ |
+| System audio capture | ✅ (ScreenCaptureKit) | ❌ | ❌ |
+
+System audio capture currently requires macOS 13.0+. Windows (WASAPI loopback) and Linux (PulseAudio) support is planned.
 
 ## Scope
 
@@ -40,7 +55,7 @@ This crate is designed for **local/desktop audio capture** - capturing audio fro
 ## Quick Start
 
 ```rust
-use stream_audio::{StreamAudio, AudioSource, FileSink, ChannelSink, FormatPreset};
+use stream_audio::{AudioChunk, AudioSource, ChannelSink, FileSink, FormatPreset, StreamAudio};
 use tokio::sync::mpsc;
 
 let (tx, rx) = mpsc::channel::<AudioChunk>(32);
@@ -60,24 +75,6 @@ while let Some(chunk) = rx.recv().await {
 }
 
 session.stop().await?;
-```
-
-## Multi-Source Capture
-
-Capture from multiple audio sources simultaneously with routing to different sinks:
-
-```rust
-let session = StreamAudio::builder()
-    .add_source("mic", AudioSource::device("MacBook Pro Microphone"))
-    .add_source("speaker", AudioSource::device("BlackHole 2ch"))
-    // Route to specific sources
-    .add_sink_from(FileSink::wav("mic.wav"), "mic")
-    .add_sink_from(FileSink::wav("speaker.wav"), "speaker")
-    // Merge multiple sources into one sink
-    .add_sink_merged(FileSink::wav("merged.wav"), ["mic", "speaker"])
-    .format(FormatPreset::Transcription)
-    .start()
-    .await?;
 ```
 
 ## Glossary
