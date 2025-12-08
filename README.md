@@ -9,6 +9,20 @@ Real-time audio capture with multi-sink architecture.
 [![Documentation](https://docs.rs/stream-audio/badge.svg)](https://docs.rs/stream-audio)
 [![license](https://img.shields.io/crates/l/stream-audio)](LICENSE)
 
+## Why stream-audio?
+
+[cpal](https://crates.io/crates/cpal) gives you low-level audio device access—raw samples in a callback. That's it. Building a production audio capture pipeline on top requires solving several hard problems:
+
+- **Non-blocking architecture**: cpal callbacks run on a high-priority audio thread that must never block. If your consumer (file write, transcription API) hiccups, you drop audio. stream-audio inserts a lock-free ring buffer to absorb backpressure, with async processing fully decoupled from the audio thread.
+
+- **System audio capture**: cpal doesn't capture loopback/system audio. On macOS, stream-audio uses ScreenCaptureKit to capture what's playing through speakers—no virtual audio device needed.
+
+- **Multi-source routing**: Capture mic + system audio simultaneously, route to separate files, merge together, or broadcast to multiple sinks—all declaratively configured.
+
+- **Format conversion**: Automatic resampling, channel conversion (stereo→mono), and sample format conversion with an optimized pipeline.
+
+stream-audio handles all of this so you can focus on what to do with the audio, not how to capture it reliably.
+
 ## Features
 
 - Non-blocking audio capture via CPAL
