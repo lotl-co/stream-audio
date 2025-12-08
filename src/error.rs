@@ -105,6 +105,29 @@ pub enum StreamAudioError {
     /// Check System Preferences > Privacy & Security > Screen Recording.
     #[error("system audio permission denied (macOS 14.2+ required; check Screen Recording in System Preferences)")]
     SystemAudioPermissionDenied,
+
+    /// The requested application was not found for system audio capture.
+    #[error("application not found: {identifier}")]
+    SystemAudioAppNotFound {
+        /// The identifier (bundle ID or name) that wasn't found.
+        identifier: String,
+    },
+
+    /// The audio format from system audio capture is not supported.
+    #[error("unsupported system audio format: {description}")]
+    SystemAudioFormatUnsupported {
+        /// Description of the format issue.
+        description: String,
+    },
+
+    /// A runtime failure occurred during system audio capture.
+    #[error("system audio runtime failure: {context}: {source}")]
+    SystemAudioRuntimeFailure {
+        /// Context about what operation failed.
+        context: String,
+        /// The underlying error.
+        source: String,
+    },
 }
 
 /// Errors that can occur within a [`Sink`](crate::Sink) implementation.
