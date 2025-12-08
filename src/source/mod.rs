@@ -9,6 +9,8 @@ mod source_id;
 #[cfg(feature = "system-audio")]
 pub mod system_audio;
 
+#[cfg(all(target_os = "macos", feature = "system-audio"))]
+pub use device::LoopbackDevice;
 pub use device::{AudioDevice, CaptureStream, DeviceConfig};
 pub use mock::MockSource;
 pub use source_id::SourceId;

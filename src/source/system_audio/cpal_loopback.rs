@@ -6,7 +6,7 @@
 use ringbuf::HeapCons;
 
 use super::SystemAudioBackend;
-use crate::source::{AudioDevice, CaptureStream};
+use crate::source::{AudioDevice, CaptureStream, LoopbackDevice};
 use crate::StreamAudioError;
 
 /// CPAL loopback backend for macOS system audio capture.
@@ -14,7 +14,7 @@ use crate::StreamAudioError;
 /// Uses Core Audio Taps to capture the default output device's audio.
 /// This is what you hear through speakers/headphones.
 pub struct CpalLoopbackBackend {
-    device: AudioDevice,
+    device: LoopbackDevice,
 }
 
 impl CpalLoopbackBackend {
