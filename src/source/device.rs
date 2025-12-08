@@ -275,6 +275,13 @@ impl LoopbackDevice {
         let sample_format = supported_config.sample_format();
         let cpal_config: CpalStreamConfig = supported_config.into();
 
+        tracing::info!(
+            "Loopback starting: {}Hz, {} ch, format={:?}",
+            cpal_config.sample_rate.0,
+            cpal_config.channels,
+            sample_format
+        );
+
         // Build INPUT stream on OUTPUT device - CPAL creates loopback tap internally
         let stream = match sample_format {
             SampleFormat::I16 => self.build_i16_stream(&cpal_config, producer)?,
@@ -298,11 +305,26 @@ impl LoopbackDevice {
         config: &CpalStreamConfig,
         mut producer: ringbuf::HeapProd<i16>,
     ) -> Result<Stream, StreamAudioError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let callback_count = std::sync::Arc::new(AtomicU64::new(0));
+        let sample_count = std::sync::Arc::new(AtomicU64::new(0));
+        let cc = callback_count.clone();
+        let sc = sample_count.clone();
+
         let stream = self
             .device
             .build_input_stream(
                 config,
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                    let cb = cc.fetch_add(1, Ordering::Relaxed);
+                    sc.fetch_add(data.len() as u64, Ordering::Relaxed);
+                    // Log every 100 callbacks (~2 seconds at typical rates)
+                    if cb % 100 == 0 {
+                        tracing::debug!(
+                            "Loopback i16 callback #{}: {} samples this batch, {} total",
+                            cb, data.len(), sc.load(Ordering::Relaxed)
+                        );
+                    }
                     let _ = producer.push_slice(data);
                 },
                 |err| {
@@ -312,6 +334,7 @@ impl LoopbackDevice {
             )
             .map_err(|e| StreamAudioError::BackendError(e.to_string()))?;
 
+        tracing::info!("Loopback i16 stream created");
         Ok(stream)
     }
 
@@ -320,11 +343,26 @@ impl LoopbackDevice {
         config: &CpalStreamConfig,
         mut producer: ringbuf::HeapProd<i16>,
     ) -> Result<Stream, StreamAudioError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let callback_count = std::sync::Arc::new(AtomicU64::new(0));
+        let sample_count = std::sync::Arc::new(AtomicU64::new(0));
+        let cc = callback_count.clone();
+        let sc = sample_count.clone();
+
         let stream = self
             .device
             .build_input_stream(
                 config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let cb = cc.fetch_add(1, Ordering::Relaxed);
+                    sc.fetch_add(data.len() as u64, Ordering::Relaxed);
+                    // Log every 100 callbacks (~2 seconds at typical rates)
+                    if cb % 100 == 0 {
+                        tracing::debug!(
+                            "Loopback f32 callback #{}: {} samples this batch, {} total",
+                            cb, data.len(), sc.load(Ordering::Relaxed)
+                        );
+                    }
                     for &sample in data {
                         let converted =
                             (sample * I16_MAX_SYMMETRIC).clamp(I16_MIN_F32, I16_MAX_F32) as i16;
@@ -338,6 +376,7 @@ impl LoopbackDevice {
             )
             .map_err(|e| StreamAudioError::BackendError(e.to_string()))?;
 
+        tracing::info!("Loopback f32 stream created");
         Ok(stream)
     }
 }
