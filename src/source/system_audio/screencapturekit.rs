@@ -238,11 +238,35 @@ impl SCStreamOutputTrait for AudioHandler {
             return;
         }
 
-        // Dev-mode self-check: log first sample format
+        // Dev-mode self-check: log first sample format and verify expectations
         if !self.first_sample_logged.swap(true, Ordering::Relaxed) {
+            let num_samples = sample.num_samples();
+            let total_size = sample.total_sample_size();
             tracing::info!(
-                "SCK first audio buffer received - verifying format"
+                "SCK first audio buffer: {} samples, {} bytes total",
+                num_samples,
+                total_size
             );
+
+            // Verify expected format: f32 interleaved stereo 48kHz
+            // Each stereo frame = 2 channels * 4 bytes = 8 bytes
+            let expected_bytes_per_frame = 8;
+            if total_size > 0 && num_samples > 0 {
+                let bytes_per_sample = total_size / num_samples;
+                if bytes_per_sample != expected_bytes_per_frame {
+                    tracing::warn!(
+                        "SCK unexpected audio format: {} bytes/sample (expected {})",
+                        bytes_per_sample,
+                        expected_bytes_per_frame
+                    );
+                    self.event_queue.push(SystemAudioEvent::CaptureDegraded {
+                        reason: format!(
+                            "unexpected audio format: {} bytes/sample",
+                            bytes_per_sample
+                        ),
+                    });
+                }
+            }
         }
 
         // Extract audio samples from CMSampleBuffer
@@ -283,22 +307,26 @@ impl SCStreamOutputTrait for AudioHandler {
 impl AudioHandler {
     /// Extracts f32 audio samples from a CMSampleBuffer.
     ///
-    /// This is a placeholder - the actual implementation depends on
-    /// screencapturekit-rs CMSampleBuffer API for audio data access.
+    /// ScreenCaptureKit provides audio as f32 samples in little-endian format.
+    /// This method extracts all audio buffers and converts to a flat Vec<f32>.
     fn extract_audio_samples(&self, sample: &CMSampleBuffer) -> Option<Vec<f32>> {
-        // TODO: Implement based on screencapturekit-rs CMSampleBuffer API
-        //
-        // Expected approaches (depends on crate version):
-        // 1. sample.audio_buffer_list() - if available
-        // 2. sample.get_data_buffer() + parsing
-        // 3. FFI to CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer
-        //
-        // For now, log that we received a buffer but can't extract yet
-        tracing::trace!("SCK received audio buffer - extraction not yet implemented");
+        let audio_list = sample.audio_buffer_list()?;
 
-        // Placeholder: return None until proper extraction is implemented
-        // This allows the rest of the backend to work/test
-        None
+        let mut samples = Vec::new();
+        for buffer in audio_list.iter() {
+            let data = buffer.data();
+            // Audio data is f32 samples in little-endian byte order
+            for chunk in data.chunks_exact(4) {
+                let sample_f32 = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                samples.push(sample_f32);
+            }
+        }
+
+        if samples.is_empty() {
+            None
+        } else {
+            Some(samples)
+        }
     }
 }
 
