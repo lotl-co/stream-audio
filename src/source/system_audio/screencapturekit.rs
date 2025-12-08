@@ -72,7 +72,7 @@ impl ScreenCaptureKitBackend {
         let content = SCShareableContent::get().map_err(|e| {
             StreamAudioError::SystemAudioRuntimeFailure {
                 context: "get shareable content".into(),
-                source: e.to_string(),
+                cause: e.to_string(),
             }
         })?;
 
@@ -189,7 +189,7 @@ impl SystemAudioBackend for ScreenCaptureKitBackend {
             } else {
                 StreamAudioError::SystemAudioRuntimeFailure {
                     context: "start capture".into(),
-                    source: err_str,
+                    cause: err_str,
                 }
             }
         })?;

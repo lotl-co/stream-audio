@@ -121,12 +121,12 @@ pub enum StreamAudioError {
     },
 
     /// A runtime failure occurred during system audio capture.
-    #[error("system audio runtime failure: {context}: {source}")]
+    #[error("system audio runtime failure: {context}: {cause}")]
     SystemAudioRuntimeFailure {
         /// Context about what operation failed.
         context: String,
-        /// The underlying error.
-        source: String,
+        /// The underlying error description.
+        cause: String,
     },
 }
 
