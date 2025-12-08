@@ -81,3 +81,9 @@ pub use sink::{ChannelSink, FileSink, Sink};
 pub use source::{
     default_input_device_name, list_input_devices, AudioDevice, DeviceConfig, MockSource, SourceId,
 };
+
+// Re-export ScreenCaptureKit types when feature is enabled
+#[cfg(feature = "screencapturekit")]
+pub use source::system_audio::{
+    AppIdentifier, CaptureTarget, ScreenCaptureKitConfig, SystemAudioEvent,
+};

@@ -9,12 +9,13 @@ use std::sync::Arc;
 
 use ringbuf::traits::{Producer, Split};
 use ringbuf::{HeapProd, HeapRb};
-use screencapturekit::cm_sample_buffer::CMSampleBuffer;
-use screencapturekit::sc_content_filter::SCContentFilter;
-use screencapturekit::sc_shareable_content::SCShareableContent;
-use screencapturekit::sc_stream::SCStream;
-use screencapturekit::sc_stream_configuration::SCStreamConfiguration;
-use screencapturekit::sc_stream_output_trait::{SCStreamOutputTrait, SCStreamOutputType};
+use screencapturekit::cm::CMSampleBuffer;
+use screencapturekit::shareable_content::{SCRunningApplication, SCShareableContent};
+use screencapturekit::stream::content_filter::SCContentFilter;
+use screencapturekit::stream::sc_stream::SCStream;
+use screencapturekit::stream::configuration::SCStreamConfiguration;
+use screencapturekit::stream::output_trait::SCStreamOutputTrait;
+use screencapturekit::stream::output_type::SCStreamOutputType;
 
 use super::{
     AppIdentifier, CaptureTarget, EventQueue, ScreenCaptureKitConfig, SystemAudioBackend,
@@ -83,14 +84,16 @@ impl ScreenCaptureKitBackend {
         })?;
 
         let apps = content.applications();
-        let current_bundle_id = std::env::current_exe()
+        // Get current process bundle ID for self-exclusion
+        // This is a simplified approach - full implementation would read from Info.plist
+        let current_bundle_id: Option<String> = std::env::current_exe()
             .ok()
             .and_then(|p| {
-                // Extract bundle ID from path if running as app bundle
                 p.to_str().and_then(|s| {
                     if s.contains(".app") {
-                        // Parse bundle ID from Info.plist or use process name
-                        None // Simplified - would need proper bundle ID extraction
+                        // For now, just return None - exclude_self won't work for app bundles
+                        // Full implementation would read CFBundleIdentifier from Info.plist
+                        None
                     } else {
                         None
                     }
@@ -105,7 +108,7 @@ impl ScreenCaptureKitBackend {
                         .filter(|app| {
                             current_bundle_id
                                 .as_ref()
-                                .map(|id| app.bundle_identifier().as_deref() != Some(id.as_str()))
+                                .map(|id| app.bundle_identifier() != *id)
                                 .unwrap_or(true)
                         })
                         .collect()
@@ -131,20 +134,20 @@ impl ScreenCaptureKitBackend {
     /// Finds an application matching the given identifier.
     fn find_app<'a>(
         &self,
-        apps: &'a [screencapturekit::sc_running_application::SCRunningApplication],
+        apps: &'a [SCRunningApplication],
         identifier: &AppIdentifier,
-    ) -> Result<&'a screencapturekit::sc_running_application::SCRunningApplication, StreamAudioError>
+    ) -> Result<&'a SCRunningApplication, StreamAudioError>
     {
         match identifier {
             AppIdentifier::BundleId(bundle_id) => apps
                 .iter()
-                .find(|app| app.bundle_identifier().as_deref() == Some(bundle_id.as_str()))
+                .find(|app| app.bundle_identifier() == *bundle_id)
                 .ok_or_else(|| StreamAudioError::SystemAudioAppNotFound {
                     identifier: identifier.to_string(),
                 }),
             AppIdentifier::Name(name) => apps
                 .iter()
-                .find(|app| app.application_name().as_deref() == Some(name.as_str()))
+                .find(|app| app.application_name() == *name)
                 .ok_or_else(|| StreamAudioError::SystemAudioAppNotFound {
                     identifier: identifier.to_string(),
                 }),

@@ -29,17 +29,21 @@ const DEFAULT_NATIVE_SAMPLE_RATE: u32 = 16000;
 const DEFAULT_NATIVE_CHANNELS: u16 = 1;
 
 /// Specifies which audio input device to use.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub(crate) enum DeviceSelection {
     /// Use the system's default input device.
     #[default]
     SystemDefault,
     /// Use a specific device by name.
     ByName(String),
-    /// Capture system audio output (speaker audio).
+    /// Capture system audio output (speaker audio) via Core Audio Taps.
     /// Requires the `system-audio` feature.
     #[cfg(feature = "system-audio")]
     SystemAudio,
+    /// Capture system audio via ScreenCaptureKit with per-app support.
+    /// Requires the `screencapturekit` feature.
+    #[cfg(feature = "screencapturekit")]
+    ScreenCaptureKit(crate::source::system_audio::ScreenCaptureKitConfig),
 }
 
 /// Configuration for an audio source in multi-source mode.
@@ -88,6 +92,41 @@ impl AudioSource {
             device: DeviceSelection::SystemAudio,
         }
     }
+
+    /// Create a source that captures system audio via ScreenCaptureKit.
+    ///
+    /// This allows capturing audio from all apps or specific apps by bundle ID.
+    /// Requires macOS 12.3+ and Screen Recording permission.
+    ///
+    /// Requires the `screencapturekit` feature.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use stream_audio::{StreamAudio, AudioSource, FileSink, ScreenCaptureKitConfig};
+    ///
+    /// // Capture all system audio
+    /// StreamAudio::builder()
+    ///     .add_source("speaker", AudioSource::screencapturekit(ScreenCaptureKitConfig::all_apps()))
+    ///     .add_sink(FileSink::wav("output.wav"))
+    ///     .start()
+    ///     .await?;
+    ///
+    /// // Capture audio from a specific app
+    /// StreamAudio::builder()
+    ///     .add_source("zoom", AudioSource::screencapturekit(
+    ///         ScreenCaptureKitConfig::app_by_bundle_id("us.zoom.xos")
+    ///     ))
+    ///     .add_sink(FileSink::wav("zoom_audio.wav"))
+    ///     .start()
+    ///     .await?;
+    /// ```
+    #[cfg(feature = "screencapturekit")]
+    pub fn screencapturekit(config: crate::source::system_audio::ScreenCaptureKitConfig) -> Self {
+        Self {
+            device: DeviceSelection::ScreenCaptureKit(config),
+        }
+    }
 }
 
 /// Resolved audio source - either a device or system audio backend.
@@ -95,7 +134,7 @@ enum ResolvedSource {
     /// CPAL audio device.
     Device(AudioDevice),
     /// System audio backend.
-    #[cfg(feature = "system-audio")]
+    #[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
     SystemAudio(Box<dyn crate::source::system_audio::SystemAudioBackend>),
 }
 
@@ -106,7 +145,7 @@ impl ResolvedSource {
     ) -> Result<(crate::source::CaptureStream, ringbuf::HeapCons<i16>), StreamAudioError> {
         match self {
             ResolvedSource::Device(device) => device.start_capture(),
-            #[cfg(feature = "system-audio")]
+            #[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
             ResolvedSource::SystemAudio(backend) => backend.start_capture(),
         }
     }
@@ -115,7 +154,7 @@ impl ResolvedSource {
     fn native_config(&self) -> Result<(u32, u16), StreamAudioError> {
         match self {
             ResolvedSource::Device(device) => device.native_config(),
-            #[cfg(feature = "system-audio")]
+            #[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
             ResolvedSource::SystemAudio(backend) => Ok(backend.native_config()),
         }
     }
@@ -453,6 +492,12 @@ impl StreamAudioBuilder {
             #[cfg(feature = "system-audio")]
             DeviceSelection::SystemAudio => {
                 let backend = crate::source::system_audio::create_system_audio_backend()?;
+                ResolvedSource::SystemAudio(backend)
+            }
+            #[cfg(feature = "screencapturekit")]
+            DeviceSelection::ScreenCaptureKit(config) => {
+                let backend =
+                    crate::source::system_audio::create_screencapturekit_backend(config.clone())?;
                 ResolvedSource::SystemAudio(backend)
             }
         };

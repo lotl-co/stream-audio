@@ -6,7 +6,7 @@
 mod device;
 mod mock;
 mod source_id;
-#[cfg(feature = "system-audio")]
+#[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
 pub mod system_audio;
 
 #[cfg(all(target_os = "macos", feature = "system-audio"))]

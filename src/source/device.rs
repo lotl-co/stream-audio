@@ -363,7 +363,7 @@ enum CaptureStreamInner {
     /// CPAL audio device stream.
     Cpal(Stream),
     /// System audio backend stream (holds boxed trait object for cleanup).
-    #[cfg(feature = "system-audio")]
+    #[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
     SystemAudio(Box<dyn std::any::Any + Send>),
 }
 
@@ -377,7 +377,7 @@ impl CaptureStream {
 
     /// Create a `CaptureStream` from a system audio backend.
     /// Used by mock backend for testing; may be used by future non-CPAL backends.
-    #[cfg(feature = "system-audio")]
+    #[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
     #[allow(dead_code)]
     pub(crate) fn from_system_audio<T: Send + 'static>(stream: T) -> Self {
         Self {
