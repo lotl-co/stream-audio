@@ -91,6 +91,19 @@ pub enum StreamAudioError {
         /// The duplicated source ID.
         source_id: String,
     },
+
+    /// System audio capture is not available on this platform or configuration.
+    #[error("system audio capture unavailable: {reason}")]
+    SystemAudioUnavailable {
+        /// Why system audio is unavailable.
+        reason: String,
+    },
+
+    /// Permission to capture system audio was denied.
+    ///
+    /// On macOS, check System Preferences > Security & Privacy > Screen Recording.
+    #[error("system audio permission denied (check Screen Recording in System Preferences)")]
+    SystemAudioPermissionDenied,
 }
 
 /// Errors that can occur within a [`Sink`](crate::Sink) implementation.

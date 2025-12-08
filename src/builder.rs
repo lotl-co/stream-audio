@@ -36,6 +36,10 @@ pub(crate) enum DeviceSelection {
     SystemDefault,
     /// Use a specific device by name.
     ByName(String),
+    /// Capture system audio output (speaker audio).
+    /// Requires the `system-audio` feature.
+    #[cfg(feature = "system-audio")]
+    SystemAudio,
 }
 
 /// Configuration for an audio source in multi-source mode.
@@ -59,15 +63,71 @@ impl AudioSource {
             device: DeviceSelection::ByName(name.into()),
         }
     }
+
+    /// Create a source that captures system audio (speaker output).
+    ///
+    /// This captures what you hear through your speakers/headphones,
+    /// without requiring virtual audio devices like `BlackHole`.
+    ///
+    /// Requires the `system-audio` feature and appropriate OS permissions:
+    /// - macOS: Screen Recording permission (System Preferences > Security & Privacy)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// StreamAudio::builder()
+    ///     .add_source("mic", AudioSource::default_device())
+    ///     .add_source("speaker", AudioSource::system_audio())
+    ///     .add_sink_merged(FileSink::wav("meeting.wav"), ["mic", "speaker"])
+    ///     .start()
+    ///     .await?;
+    /// ```
+    #[cfg(feature = "system-audio")]
+    pub fn system_audio() -> Self {
+        Self {
+            device: DeviceSelection::SystemAudio,
+        }
+    }
 }
 
-/// Resolved audio configuration after opening the device.
+/// Resolved audio source - either a device or system audio backend.
+enum ResolvedSource {
+    /// CPAL audio device.
+    Device(AudioDevice),
+    /// System audio backend.
+    #[cfg(feature = "system-audio")]
+    SystemAudio(Box<dyn crate::source::system_audio::SystemAudioBackend>),
+}
+
+impl ResolvedSource {
+    /// Start capture and return the stream + ring buffer consumer.
+    fn start_capture(
+        &self,
+    ) -> Result<(crate::source::CaptureStream, ringbuf::HeapCons<i16>), StreamAudioError> {
+        match self {
+            ResolvedSource::Device(device) => device.start_capture(),
+            #[cfg(feature = "system-audio")]
+            ResolvedSource::SystemAudio(backend) => backend.start_capture(),
+        }
+    }
+
+    /// Get native sample rate and channel count.
+    fn native_config(&self) -> Result<(u32, u16), StreamAudioError> {
+        match self {
+            ResolvedSource::Device(device) => device.native_config(),
+            #[cfg(feature = "system-audio")]
+            ResolvedSource::SystemAudio(backend) => Ok(backend.native_config()),
+        }
+    }
+}
+
+/// Resolved audio configuration after opening the source.
 struct ResolvedAudioConfig {
-    device: AudioDevice,
+    source: ResolvedSource,
     /// Target format (what sinks receive)
     target_sample_rate: u32,
     target_channels: u16,
-    /// Device format (what CPAL actually captures)
+    /// Source format (what the source actually captures)
     device_sample_rate: u32,
     device_channels: u16,
 }
@@ -348,7 +408,7 @@ impl StreamAudioBuilder {
 
         for (source_id, source) in &self.sources {
             let audio_config = self.resolve_source_device(source)?;
-            let (capture_stream, ring_consumer) = audio_config.device.start_capture()?;
+            let (capture_stream, ring_consumer) = audio_config.source.start_capture()?;
 
             let capture_config = self.create_capture_config(&audio_config, source_id.clone());
             let capture_handle = spawn_capture_bridge(
@@ -380,22 +440,29 @@ impl StreamAudioBuilder {
         ))
     }
 
-    /// Resolves a source's device.
+    /// Resolves a source's device or system audio backend.
     fn resolve_source_device(
         &self,
         source: &AudioSource,
     ) -> Result<ResolvedAudioConfig, StreamAudioError> {
-        let device = match &source.device {
-            DeviceSelection::SystemDefault => AudioDevice::open_default()?,
-            DeviceSelection::ByName(name) => AudioDevice::open_by_name(name)?,
+        let resolved_source = match &source.device {
+            DeviceSelection::SystemDefault => ResolvedSource::Device(AudioDevice::open_default()?),
+            DeviceSelection::ByName(name) => {
+                ResolvedSource::Device(AudioDevice::open_by_name(name)?)
+            }
+            #[cfg(feature = "system-audio")]
+            DeviceSelection::SystemAudio => {
+                let backend = crate::source::system_audio::create_system_audio_backend()?;
+                ResolvedSource::SystemAudio(backend)
+            }
         };
 
-        let (device_sample_rate, device_channels) = device.native_config()?;
+        let (device_sample_rate, device_channels) = resolved_source.native_config()?;
         let target_sample_rate = self.format.sample_rate().unwrap_or(device_sample_rate);
         let target_channels = self.format.channels().unwrap_or(device_channels);
 
         Ok(ResolvedAudioConfig {
-            device,
+            source: resolved_source,
             target_sample_rate,
             target_channels,
             device_sample_rate,

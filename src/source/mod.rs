@@ -6,6 +6,8 @@
 mod device;
 mod mock;
 mod source_id;
+#[cfg(feature = "system-audio")]
+pub mod system_audio;
 
 pub use device::{AudioDevice, CaptureStream, DeviceConfig};
 pub use mock::MockSource;

@@ -45,7 +45,7 @@
 //! This design ensures audio capture is never interrupted by slow file I/O,
 //! network latency, or processing delays.
 
-#![forbid(unsafe_code)]
+// unsafe_code lint is configured in Cargo.toml as "deny" to allow system-audio module override
 #![warn(missing_docs)]
 // Audio code requires intentional numeric casts between sample formats
 #![allow(

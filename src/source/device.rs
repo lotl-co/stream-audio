@@ -157,7 +157,7 @@ impl AudioDevice {
             .play()
             .map_err(|e| StreamAudioError::BackendError(e.to_string()))?;
 
-        Ok((CaptureStream { _stream: stream }, consumer))
+        Ok((CaptureStream::from_cpal(stream), consumer))
     }
 
     fn build_i16_stream(
@@ -213,17 +213,48 @@ impl AudioDevice {
 
 /// A running audio capture stream.
 ///
-/// Audio capture continues while this struct is held. When dropped, the CPAL
-/// stream is automatically stopped and resources are released.
+/// Audio capture continues while this struct is held. When dropped, the
+/// underlying stream is automatically stopped and resources are released.
 ///
 /// This is a simple RAII wrapper - the stream runs while this exists.
+/// Supports both CPAL device streams and system audio backends.
 pub struct CaptureStream {
-    /// The underlying CPAL stream. Dropping this stops capture.
-    _stream: Stream,
+    /// The underlying stream. Dropping this stops capture.
+    /// Field is intentionally never read - it exists only for RAII cleanup.
+    #[allow(dead_code)]
+    inner: CaptureStreamInner,
+}
+
+/// Internal enum to support different stream backends.
+/// All variants hold streams for RAII cleanup - fields are never read directly.
+#[allow(dead_code)]
+enum CaptureStreamInner {
+    /// CPAL audio device stream.
+    Cpal(Stream),
+    /// System audio backend stream (holds boxed trait object for cleanup).
+    #[cfg(feature = "system-audio")]
+    SystemAudio(Box<dyn std::any::Any + Send>),
+}
+
+impl CaptureStream {
+    /// Create a `CaptureStream` from a CPAL stream.
+    pub(crate) fn from_cpal(stream: Stream) -> Self {
+        Self {
+            inner: CaptureStreamInner::Cpal(stream),
+        }
+    }
+
+    /// Create a `CaptureStream` from a system audio backend.
+    #[cfg(feature = "system-audio")]
+    pub(crate) fn from_system_audio<T: Send + 'static>(stream: T) -> Self {
+        Self {
+            inner: CaptureStreamInner::SystemAudio(Box::new(stream)),
+        }
+    }
 }
 
 // CaptureStream uses RAII - stream runs while it exists, stops when dropped.
-// No explicit stop() needed; the CPAL stream handles cleanup on drop.
+// No explicit stop() needed; the underlying stream handles cleanup on drop.
 
 #[cfg(test)]
 mod tests {
