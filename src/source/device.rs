@@ -76,8 +76,8 @@ impl AudioDevice {
             .map_err(|e| StreamAudioError::BackendError(e.to_string()))?;
 
         for device in devices {
-            if let Ok(device_name) = device.name() {
-                if device_name == name {
+            if let Ok(desc) = device.description() {
+                if desc.name() == name {
                     return Ok(Self {
                         device,
                         config: DeviceConfig::default(),
@@ -91,6 +91,29 @@ impl AudioDevice {
         })
     }
 
+    /// Opens the default output device for loopback capture (system audio).
+    ///
+    /// This captures what's playing through speakers/headphones using
+    /// Core Audio Taps. Requires macOS 14.2+.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SystemAudioUnavailable` if no default output device exists.
+    #[cfg(all(target_os = "macos", feature = "system-audio"))]
+    pub fn open_loopback() -> Result<Self, StreamAudioError> {
+        let host = cpal::default_host();
+        let device =
+            host.default_output_device()
+                .ok_or(StreamAudioError::SystemAudioUnavailable {
+                    reason: "no default output device for loopback".into(),
+                })?;
+
+        Ok(Self {
+            device,
+            config: DeviceConfig::default(),
+        })
+    }
+
     /// Sets the device configuration.
     pub fn with_config(mut self, config: DeviceConfig) -> Self {
         self.config = config;
@@ -99,7 +122,9 @@ impl AudioDevice {
 
     /// Returns the device name.
     pub fn name(&self) -> String {
-        self.device.name().unwrap_or_else(|_| "unknown".to_string())
+        self.device
+            .description()
+            .map_or_else(|_| "unknown".to_string(), |d| d.name().to_string())
     }
 
     /// Returns the current configuration.
@@ -245,7 +270,9 @@ impl CaptureStream {
     }
 
     /// Create a `CaptureStream` from a system audio backend.
+    /// Used by mock backend for testing; may be used by future non-CPAL backends.
     #[cfg(feature = "system-audio")]
+    #[allow(dead_code)]
     pub(crate) fn from_system_audio<T: Send + 'static>(stream: T) -> Self {
         Self {
             inner: CaptureStreamInner::SystemAudio(Box::new(stream)),

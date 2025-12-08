@@ -1,10 +1,10 @@
 //! System audio capture backend abstraction.
 //!
 //! This module provides platform-specific system audio capture (speaker/output audio)
-//! via native APIs like `ScreenCaptureKit` on macOS.
+//! via native APIs. On macOS, uses Core Audio Taps (CPAL loopback) for low-latency capture.
 
 #[cfg(all(target_os = "macos", feature = "system-audio"))]
-mod screencapturekit;
+mod cpal_loopback;
 
 #[cfg(test)]
 pub mod mock;
@@ -15,14 +15,11 @@ use crate::source::CaptureStream;
 use crate::StreamAudioError;
 
 /// Default sample rate for system audio capture (48kHz).
-/// `ScreenCaptureKit` typically provides audio at this rate.
+/// Core Audio typically provides audio at this rate.
 pub const DEFAULT_SYSTEM_AUDIO_SAMPLE_RATE: u32 = 48000;
 
 /// Default channel count for system audio capture (stereo).
 pub const DEFAULT_SYSTEM_AUDIO_CHANNELS: u16 = 2;
-
-/// Ring buffer capacity for system audio (30 seconds at 48kHz stereo).
-const SYSTEM_AUDIO_BUFFER_CAPACITY: usize = 48000 * 2 * 30;
 
 /// Backend for capturing system audio.
 ///
@@ -49,13 +46,13 @@ pub trait SystemAudioBackend: Send {
 ///
 /// Returns `SystemAudioUnavailable` if:
 /// - The `system-audio` feature is not enabled
-/// - The platform doesn't support system audio capture
-/// - Required permissions are not granted
+/// - The platform doesn't support system audio capture (macOS 14.2+ required)
+/// - No default output device is available
 #[allow(unreachable_code)]
 pub fn create_system_audio_backend() -> Result<Box<dyn SystemAudioBackend>, StreamAudioError> {
     #[cfg(all(target_os = "macos", feature = "system-audio"))]
     {
-        return Ok(Box::new(screencapturekit::ScreenCaptureKitBackend::new()?));
+        return Ok(Box::new(cpal_loopback::CpalLoopbackBackend::new()?));
     }
 
     #[cfg(all(target_os = "macos", not(feature = "system-audio")))]

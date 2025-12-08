@@ -6,10 +6,10 @@
 use ringbuf::traits::{Producer, Split};
 use ringbuf::HeapRb;
 
-use super::{
-    SystemAudioBackend, DEFAULT_SYSTEM_AUDIO_CHANNELS, DEFAULT_SYSTEM_AUDIO_SAMPLE_RATE,
-    SYSTEM_AUDIO_BUFFER_CAPACITY,
-};
+use super::{SystemAudioBackend, DEFAULT_SYSTEM_AUDIO_CHANNELS, DEFAULT_SYSTEM_AUDIO_SAMPLE_RATE};
+
+/// Ring buffer capacity for mock system audio (30 seconds at 48kHz stereo).
+const MOCK_BUFFER_CAPACITY: usize = 48000 * 2 * 30;
 use crate::source::CaptureStream;
 use crate::StreamAudioError;
 
@@ -60,7 +60,7 @@ impl Default for MockSystemAudioBackend {
 
 impl SystemAudioBackend for MockSystemAudioBackend {
     fn start_capture(&self) -> Result<(CaptureStream, ringbuf::HeapCons<i16>), StreamAudioError> {
-        let ring_buffer = HeapRb::<i16>::new(SYSTEM_AUDIO_BUFFER_CAPACITY);
+        let ring_buffer = HeapRb::<i16>::new(MOCK_BUFFER_CAPACITY);
         let (mut producer, consumer) = ring_buffer.split();
 
         // Pre-fill with test samples if provided

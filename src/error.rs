@@ -101,8 +101,9 @@ pub enum StreamAudioError {
 
     /// Permission to capture system audio was denied.
     ///
-    /// On macOS, check System Preferences > Security & Privacy > Screen Recording.
-    #[error("system audio permission denied (check Screen Recording in System Preferences)")]
+    /// On macOS 14.2+, system audio capture uses Core Audio Taps.
+    /// Check System Preferences > Privacy & Security > Screen Recording.
+    #[error("system audio permission denied (macOS 14.2+ required; check Screen Recording in System Preferences)")]
     SystemAudioPermissionDenied,
 }
 

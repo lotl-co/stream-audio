@@ -26,14 +26,16 @@ pub fn list_input_devices() -> Result<Vec<String>, crate::StreamAudioError> {
         .input_devices()
         .map_err(|e| crate::StreamAudioError::BackendError(e.to_string()))?;
 
-    Ok(devices.filter_map(|d| d.name().ok()).collect())
+    Ok(devices
+        .filter_map(|d| d.description().ok().map(|desc| desc.name().to_string()))
+        .collect())
 }
 
 /// Gets the name of the default input device, if any.
 pub fn default_input_device_name() -> Option<String> {
     cpal::default_host()
         .default_input_device()
-        .and_then(|d| d.name().ok())
+        .and_then(|d| d.description().ok().map(|desc| desc.name().to_string()))
 }
 
 #[cfg(test)]

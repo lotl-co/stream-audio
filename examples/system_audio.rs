@@ -6,7 +6,7 @@
 //! Run with: cargo run --example system_audio --features system-audio
 //!
 //! Requirements:
-//! - macOS 13.0+ (Ventura or later)
+//! - macOS 14.2+ (Sonoma or later) - uses Core Audio Taps
 //! - Screen Recording permission (prompted on first run)
 
 #[cfg(not(feature = "system-audio"))]
@@ -32,8 +32,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - Your microphone (what you say)");
     println!("  - System audio (what you hear - video calls, music, etc.)\n");
 
-    println!("Note: On first run, macOS will prompt for Screen Recording permission.");
-    println!("Grant permission in System Preferences > Privacy & Security > Screen Recording.\n");
+    println!("Note: On first run, macOS may prompt for Screen Recording permission.");
+    println!("Grant permission in System Preferences > Privacy & Security > Screen Recording.");
+    println!("Requires macOS 14.2+ (Sonoma) for Core Audio Taps support.\n");
 
     // Create a channel to receive merged audio chunks
     let (tx, mut rx) = mpsc::channel::<AudioChunk>(100);

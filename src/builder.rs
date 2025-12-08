@@ -70,7 +70,7 @@ impl AudioSource {
     /// without requiring virtual audio devices like `BlackHole`.
     ///
     /// Requires the `system-audio` feature and appropriate OS permissions:
-    /// - macOS: Screen Recording permission (System Preferences > Security & Privacy)
+    /// - macOS 14.2+: Uses Core Audio Taps; may require Screen Recording permission
     ///
     /// # Example
     ///
