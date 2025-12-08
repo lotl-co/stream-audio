@@ -65,3 +65,9 @@ cognitive_complexity = "warn"
 
 # Performance
 perf = { level = "warn", priority = -1 }
+
+[profile.dev]
+rpath = true
+
+[profile.release]
+rpath = true
