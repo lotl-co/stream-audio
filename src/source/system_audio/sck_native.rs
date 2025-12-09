@@ -88,6 +88,7 @@ extern "C" {
     fn sck_audio_destroy(session: SCKAudioSessionRef);
     fn sck_audio_start(session: SCKAudioSessionRef) -> i32;
     fn sck_audio_stop(session: SCKAudioSessionRef);
+    #[allow(dead_code)] // Available for future use
     fn sck_audio_is_running(session: SCKAudioSessionRef) -> i32;
     fn sck_audio_session_error(session: SCKAudioSessionRef) -> *const c_char;
 }

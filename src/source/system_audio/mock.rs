@@ -71,17 +71,17 @@ impl SystemAudioBackend for MockSystemAudioBackend {
         // Create a mock capture stream that does nothing when dropped
         let capture_stream = MockCaptureStream { _running: true };
 
-        #[cfg(feature = "system-audio")]
+        #[cfg(all(target_os = "macos", feature = "sck-native"))]
         {
             Ok((CaptureStream::from_system_audio(capture_stream), consumer))
         }
-        #[cfg(not(feature = "system-audio"))]
+        #[cfg(not(all(target_os = "macos", feature = "sck-native")))]
         {
-            // When system-audio feature is not enabled, we can't create a CaptureStream
+            // When sck-native feature is not enabled, we can't create a CaptureStream
             // from system audio. This is a test-only path that shouldn't happen in practice.
             let _ = capture_stream;
             Err(StreamAudioError::SystemAudioUnavailable {
-                reason: "mock backend requires system-audio feature".to_string(),
+                reason: "mock backend requires sck-native feature".to_string(),
             })
         }
     }
@@ -126,8 +126,8 @@ mod tests {
         let samples = vec![100, 200, 300, 400];
         let backend = MockSystemAudioBackend::with_samples(samples.clone());
 
-        // Need system-audio feature to actually start capture
-        #[cfg(feature = "system-audio")]
+        // Need sck-native feature to actually start capture
+        #[cfg(all(target_os = "macos", feature = "sck-native"))]
         {
             let (_stream, mut consumer) = backend.start_capture().unwrap();
 

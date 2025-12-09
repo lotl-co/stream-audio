@@ -544,7 +544,7 @@ impl StreamAudioBuilder {
 
     /// Queries the current default output device configuration.
     /// Returns None if query fails (no output device, etc.)
-    #[cfg(all(target_os = "macos", feature = "system-audio"))]
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
     fn query_output_device_config() -> Option<(u32, u16)> {
         use cpal::traits::{DeviceTrait, HostTrait};
         let host = cpal::default_host();
@@ -553,17 +553,13 @@ impl StreamAudioBuilder {
         Some((config.sample_rate().0, config.channels()))
     }
 
-    /// Checks if a source is a system audio source (loopback or SCK).
+    /// Checks if a source is a system audio source.
     fn is_system_audio_source(source: &AudioSource) -> bool {
-        #[cfg(feature = "system-audio")]
+        #[cfg(all(target_os = "macos", feature = "sck-native"))]
         if matches!(source.device, DeviceSelection::SystemAudio) {
             return true;
         }
-        #[cfg(feature = "screencapturekit")]
-        if matches!(source.device, DeviceSelection::ScreenCaptureKit(_)) {
-            return true;
-        }
-        let _ = source; // suppress unused warning when no features enabled
+        let _ = source; // suppress unused warning when feature not enabled
         false
     }
 }

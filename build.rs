@@ -52,6 +52,10 @@ fn build_swift_library() {
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=dylib=sck_audio");
 
+    // Add rpath so the dylib can be found at runtime
+    // This is a known Cargo limitation - see rust-lang/cargo#5077
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
+
     // Link required Apple frameworks
     println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
     println!("cargo:rustc-link-lib=framework=CoreMedia");
