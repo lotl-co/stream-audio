@@ -13,8 +13,8 @@ categories = ["multimedia::audio", "asynchronous"]
 
 [features]
 default = []
-system-audio = []
-screencapturekit = ["dep:screencapturekit"]
+# Native ScreenCaptureKit backend via Swift FFI (macOS 12.3+)
+sck-native = []
 
 [dependencies]
 async-trait = "0.1"
@@ -25,9 +25,6 @@ ringbuf = "0.4"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "fs", "time"] }
 tracing = "0.1"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-screencapturekit = { version = "1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

@@ -3,6 +3,10 @@
 **/*.rs.bk
 Cargo.lock
 
+# Swift build artifacts
+swift/.build/
+swift/.swiftpm/
+
 # IDE and editor files
 .idea/
 .vscode/
@@ -36,3 +40,4 @@ tarpaulin-report.html
 Thumbs.db
 ._*
 /tmp
+*.wav

@@ -36,14 +36,10 @@ pub(crate) enum DeviceSelection {
     SystemDefault,
     /// Use a specific device by name.
     ByName(String),
-    /// Capture system audio output (speaker audio) via Core Audio Taps.
-    /// Requires the `system-audio` feature.
-    #[cfg(feature = "system-audio")]
+    /// Capture system audio output via ScreenCaptureKit.
+    /// Requires the `sck-native` feature on macOS.
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
     SystemAudio,
-    /// Capture system audio via ScreenCaptureKit with per-app support.
-    /// Requires the `screencapturekit` feature.
-    #[cfg(feature = "screencapturekit")]
-    ScreenCaptureKit(crate::source::system_audio::ScreenCaptureKitConfig),
 }
 
 /// Configuration for an audio source in multi-source mode.
@@ -73,8 +69,7 @@ impl AudioSource {
     /// This captures what you hear through your speakers/headphones,
     /// without requiring virtual audio devices like `BlackHole`.
     ///
-    /// Requires the `system-audio` feature and appropriate OS permissions:
-    /// - macOS 14.2+: Uses Core Audio Taps; may require Screen Recording permission
+    /// Requires the `sck-native` feature on macOS 13+ and Screen Recording permission.
     ///
     /// # Example
     ///
@@ -86,45 +81,10 @@ impl AudioSource {
     ///     .start()
     ///     .await?;
     /// ```
-    #[cfg(feature = "system-audio")]
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
     pub fn system_audio() -> Self {
         Self {
             device: DeviceSelection::SystemAudio,
-        }
-    }
-
-    /// Create a source that captures system audio via ScreenCaptureKit.
-    ///
-    /// This allows capturing audio from all apps or specific apps by bundle ID.
-    /// Requires macOS 12.3+ and Screen Recording permission.
-    ///
-    /// Requires the `screencapturekit` feature.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use stream_audio::{StreamAudio, AudioSource, FileSink, ScreenCaptureKitConfig};
-    ///
-    /// // Capture all system audio
-    /// StreamAudio::builder()
-    ///     .add_source("speaker", AudioSource::screencapturekit(ScreenCaptureKitConfig::all_apps()))
-    ///     .add_sink(FileSink::wav("output.wav"))
-    ///     .start()
-    ///     .await?;
-    ///
-    /// // Capture audio from a specific app
-    /// StreamAudio::builder()
-    ///     .add_source("zoom", AudioSource::screencapturekit(
-    ///         ScreenCaptureKitConfig::app_by_bundle_id("us.zoom.xos")
-    ///     ))
-    ///     .add_sink(FileSink::wav("zoom_audio.wav"))
-    ///     .start()
-    ///     .await?;
-    /// ```
-    #[cfg(feature = "screencapturekit")]
-    pub fn screencapturekit(config: crate::source::system_audio::ScreenCaptureKitConfig) -> Self {
-        Self {
-            device: DeviceSelection::ScreenCaptureKit(config),
         }
     }
 }
@@ -133,8 +93,8 @@ impl AudioSource {
 enum ResolvedSource {
     /// CPAL audio device.
     Device(AudioDevice),
-    /// System audio backend.
-    #[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
+    /// System audio backend (macOS only with sck-native feature).
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
     SystemAudio(Box<dyn crate::source::system_audio::SystemAudioBackend>),
 }
 
@@ -145,7 +105,7 @@ impl ResolvedSource {
     ) -> Result<(crate::source::CaptureStream, ringbuf::HeapCons<i16>), StreamAudioError> {
         match self {
             ResolvedSource::Device(device) => device.start_capture(),
-            #[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
+            #[cfg(all(target_os = "macos", feature = "sck-native"))]
             ResolvedSource::SystemAudio(backend) => backend.start_capture(),
         }
     }
@@ -154,7 +114,7 @@ impl ResolvedSource {
     fn native_config(&self) -> Result<(u32, u16), StreamAudioError> {
         match self {
             ResolvedSource::Device(device) => device.native_config(),
-            #[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
+            #[cfg(all(target_os = "macos", feature = "sck-native"))]
             ResolvedSource::SystemAudio(backend) => Ok(backend.native_config()),
         }
     }
@@ -441,31 +401,70 @@ impl StreamAudioBuilder {
             router.run(chunk_rx, router_cmd_rx).await;
         });
 
-        // Start capture for each source
+        // Separate sources: start non-system-audio sources first, then system audio.
+        // This handles Bluetooth profile switching: when mic starts, Bluetooth may
+        // switch from A2DP (high quality output) to HFP (low quality bidirectional).
+        // By starting system audio LAST, we capture at the actual (possibly degraded) config.
+        let (regular_sources, system_audio_sources): (Vec<_>, Vec<_>) =
+            self.sources
+                .iter()
+                .partition(|(_, source)| !Self::is_system_audio_source(source));
+
         let mut capture_handles = Vec::new();
         let mut capture_streams = Vec::new();
 
-        for (source_id, source) in &self.sources {
-            let audio_config = self.resolve_source_device(source)?;
-            let (capture_stream, ring_consumer) = audio_config.source.start_capture()?;
+        // Snapshot output device config before starting any sources
+        #[cfg(all(target_os = "macos", feature = "sck-native"))]
+        let initial_output_config = Self::query_output_device_config();
 
-            let capture_config = self.create_capture_config(&audio_config, source_id.clone());
-            let capture_handle = spawn_capture_bridge(
-                ring_consumer,
-                &capture_config,
-                chunk_tx.clone(),
-                Arc::clone(&state),
-            );
+        // Start regular sources first (mic, named devices, etc.)
+        for (source_id, source) in &regular_sources {
+            self.start_single_source(
+                source_id,
+                source,
+                &chunk_tx,
+                &state,
+                &mut capture_handles,
+                &mut capture_streams,
+            )?;
+        }
 
-            // Emit SourceStarted event
-            if let Some(ref callback) = self.event_callback {
-                callback(StreamEvent::SourceStarted {
-                    source_id: source_id.clone(),
-                });
+        // Check if output config changed after starting regular sources
+        #[cfg(all(target_os = "macos", feature = "sck-native"))]
+        let post_mic_output_config = Self::query_output_device_config();
+
+        // Start system audio sources last (they'll use the current config)
+        for (source_id, source) in &system_audio_sources {
+            // Emit config change warning if Bluetooth profile switched
+            #[cfg(all(target_os = "macos", feature = "sck-native"))]
+            if let (Some(initial), Some(current)) =
+                (initial_output_config.as_ref(), post_mic_output_config.as_ref())
+            {
+                if initial != current {
+                    if let Some(ref callback) = self.event_callback {
+                        callback(StreamEvent::AudioConfigChanged {
+                            source_id: source_id.clone(),
+                            previous: *initial,
+                            current: *current,
+                            message: format!(
+                                "Output device config changed from {}Hz/{}ch to {}Hz/{}ch. \
+                                 This may indicate Bluetooth profile switching (A2DP to HFP). \
+                                 System audio will capture at the new config.",
+                                initial.0, initial.1, current.0, current.1
+                            ),
+                        });
+                    }
+                }
             }
 
-            capture_handles.push(capture_handle);
-            capture_streams.push(capture_stream);
+            self.start_single_source(
+                source_id,
+                source,
+                &chunk_tx,
+                &state,
+                &mut capture_handles,
+                &mut capture_streams,
+            )?;
         }
 
         Ok(Session::new(
@@ -489,15 +488,9 @@ impl StreamAudioBuilder {
             DeviceSelection::ByName(name) => {
                 ResolvedSource::Device(AudioDevice::open_by_name(name)?)
             }
-            #[cfg(feature = "system-audio")]
+            #[cfg(all(target_os = "macos", feature = "sck-native"))]
             DeviceSelection::SystemAudio => {
                 let backend = crate::source::system_audio::create_system_audio_backend()?;
-                ResolvedSource::SystemAudio(backend)
-            }
-            #[cfg(feature = "screencapturekit")]
-            DeviceSelection::ScreenCaptureKit(config) => {
-                let backend =
-                    crate::source::system_audio::create_screencapturekit_backend(config.clone())?;
                 ResolvedSource::SystemAudio(backend)
             }
         };
@@ -513,6 +506,65 @@ impl StreamAudioBuilder {
             device_sample_rate,
             device_channels,
         })
+    }
+
+    /// Starts a single source and adds it to the capture handles/streams.
+    fn start_single_source(
+        &self,
+        source_id: &SourceId,
+        source: &AudioSource,
+        chunk_tx: &mpsc::Sender<crate::chunk::AudioChunk>,
+        state: &Arc<SessionState>,
+        capture_handles: &mut Vec<tokio::task::JoinHandle<()>>,
+        capture_streams: &mut Vec<crate::source::CaptureStream>,
+    ) -> Result<(), StreamAudioError> {
+        let audio_config = self.resolve_source_device(source)?;
+        let (capture_stream, ring_consumer) = audio_config.source.start_capture()?;
+
+        let capture_config = self.create_capture_config(&audio_config, source_id.clone());
+        let capture_handle = spawn_capture_bridge(
+            ring_consumer,
+            &capture_config,
+            chunk_tx.clone(),
+            Arc::clone(state),
+            self.event_callback.clone(),
+        );
+
+        // Emit SourceStarted event
+        if let Some(ref callback) = self.event_callback {
+            callback(StreamEvent::SourceStarted {
+                source_id: source_id.clone(),
+            });
+        }
+
+        capture_handles.push(capture_handle);
+        capture_streams.push(capture_stream);
+        Ok(())
+    }
+
+    /// Queries the current default output device configuration.
+    /// Returns None if query fails (no output device, etc.)
+    #[cfg(all(target_os = "macos", feature = "system-audio"))]
+    fn query_output_device_config() -> Option<(u32, u16)> {
+        use cpal::traits::{DeviceTrait, HostTrait};
+        let host = cpal::default_host();
+        let device = host.default_output_device()?;
+        let config = device.default_output_config().ok()?;
+        Some((config.sample_rate().0, config.channels()))
+    }
+
+    /// Checks if a source is a system audio source (loopback or SCK).
+    fn is_system_audio_source(source: &AudioSource) -> bool {
+        #[cfg(feature = "system-audio")]
+        if matches!(source.device, DeviceSelection::SystemAudio) {
+            return true;
+        }
+        #[cfg(feature = "screencapturekit")]
+        if matches!(source.device, DeviceSelection::ScreenCaptureKit(_)) {
+            return true;
+        }
+        let _ = source; // suppress unused warning when no features enabled
+        false
     }
 }
 

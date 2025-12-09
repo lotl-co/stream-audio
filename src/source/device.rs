@@ -91,29 +91,6 @@ impl AudioDevice {
         })
     }
 
-    /// Opens the default output device for loopback capture (system audio).
-    ///
-    /// This captures what's playing through speakers/headphones using
-    /// Core Audio Taps. Requires macOS 14.2+.
-    ///
-    /// # Errors
-    ///
-    /// Returns `SystemAudioUnavailable` if no default output device exists.
-    #[cfg(all(target_os = "macos", feature = "system-audio"))]
-    pub fn open_loopback() -> Result<LoopbackDevice, StreamAudioError> {
-        let host = cpal::default_host();
-        let device =
-            host.default_output_device()
-                .ok_or(StreamAudioError::SystemAudioUnavailable {
-                    reason: "no default output device for loopback".into(),
-                })?;
-
-        Ok(LoopbackDevice {
-            device,
-            config: DeviceConfig::default(),
-        })
-    }
-
     /// Sets the device configuration.
     pub fn with_config(mut self, config: DeviceConfig) -> Self {
         self.config = config;
@@ -236,151 +213,6 @@ impl AudioDevice {
     }
 }
 
-/// Wrapper around a CPAL output device for loopback capture.
-///
-/// Uses Core Audio Taps (macOS 14.2+) to capture system audio output.
-/// Unlike `AudioDevice`, this queries output config since the underlying
-/// device is an output device that CPAL will tap for input.
-#[cfg(all(target_os = "macos", feature = "system-audio"))]
-#[must_use]
-pub struct LoopbackDevice {
-    device: Device,
-    config: DeviceConfig,
-}
-
-#[cfg(all(target_os = "macos", feature = "system-audio"))]
-impl LoopbackDevice {
-    /// Returns the device's native output format (sample rate, channels).
-    pub fn native_config(&self) -> Result<(u32, u16), StreamAudioError> {
-        let config = self
-            .device
-            .default_output_config()
-            .map_err(|e| StreamAudioError::BackendError(e.to_string()))?;
-        Ok((config.sample_rate().0, config.channels()))
-    }
-
-    /// Starts capturing loopback audio and returns a running stream.
-    pub fn start_capture(
-        &self,
-    ) -> Result<(CaptureStream, ringbuf::HeapCons<i16>), StreamAudioError> {
-        let ring_buffer = HeapRb::<i16>::new(self.config.buffer_capacity);
-        let (producer, consumer) = ring_buffer.split();
-
-        // Get OUTPUT config (this is an output device we're tapping)
-        let supported_config = self
-            .device
-            .default_output_config()
-            .map_err(|e| StreamAudioError::BackendError(e.to_string()))?;
-
-        let sample_format = supported_config.sample_format();
-        let cpal_config: CpalStreamConfig = supported_config.into();
-
-        tracing::info!(
-            "Loopback starting: {}Hz, {} ch, format={:?}",
-            cpal_config.sample_rate.0,
-            cpal_config.channels,
-            sample_format
-        );
-
-        // Build INPUT stream on OUTPUT device - CPAL creates loopback tap internally
-        let stream = match sample_format {
-            SampleFormat::I16 => self.build_i16_stream(&cpal_config, producer)?,
-            SampleFormat::F32 => self.build_f32_stream(&cpal_config, producer)?,
-            format => {
-                return Err(StreamAudioError::UnsupportedFormat {
-                    format: format!("{format:?}"),
-                });
-            }
-        };
-
-        stream
-            .play()
-            .map_err(|e| StreamAudioError::BackendError(e.to_string()))?;
-
-        Ok((CaptureStream::from_cpal(stream), consumer))
-    }
-
-    fn build_i16_stream(
-        &self,
-        config: &CpalStreamConfig,
-        mut producer: ringbuf::HeapProd<i16>,
-    ) -> Result<Stream, StreamAudioError> {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        let callback_count = std::sync::Arc::new(AtomicU64::new(0));
-        let sample_count = std::sync::Arc::new(AtomicU64::new(0));
-        let cc = callback_count.clone();
-        let sc = sample_count.clone();
-
-        let stream = self
-            .device
-            .build_input_stream(
-                config,
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    let cb = cc.fetch_add(1, Ordering::Relaxed);
-                    sc.fetch_add(data.len() as u64, Ordering::Relaxed);
-                    // Log every 100 callbacks (~2 seconds at typical rates)
-                    if cb % 100 == 0 {
-                        tracing::debug!(
-                            "Loopback i16 callback #{}: {} samples this batch, {} total",
-                            cb, data.len(), sc.load(Ordering::Relaxed)
-                        );
-                    }
-                    let _ = producer.push_slice(data);
-                },
-                |err| {
-                    tracing::error!("Loopback stream error: {}", err);
-                },
-                None,
-            )
-            .map_err(|e| StreamAudioError::BackendError(e.to_string()))?;
-
-        tracing::info!("Loopback i16 stream created");
-        Ok(stream)
-    }
-
-    fn build_f32_stream(
-        &self,
-        config: &CpalStreamConfig,
-        mut producer: ringbuf::HeapProd<i16>,
-    ) -> Result<Stream, StreamAudioError> {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        let callback_count = std::sync::Arc::new(AtomicU64::new(0));
-        let sample_count = std::sync::Arc::new(AtomicU64::new(0));
-        let cc = callback_count.clone();
-        let sc = sample_count.clone();
-
-        let stream = self
-            .device
-            .build_input_stream(
-                config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let cb = cc.fetch_add(1, Ordering::Relaxed);
-                    sc.fetch_add(data.len() as u64, Ordering::Relaxed);
-                    // Log every 100 callbacks (~2 seconds at typical rates)
-                    if cb % 100 == 0 {
-                        tracing::debug!(
-                            "Loopback f32 callback #{}: {} samples this batch, {} total",
-                            cb, data.len(), sc.load(Ordering::Relaxed)
-                        );
-                    }
-                    for &sample in data {
-                        let converted =
-                            (sample * I16_MAX_SYMMETRIC).clamp(I16_MIN_F32, I16_MAX_F32) as i16;
-                        let _ = producer.try_push(converted);
-                    }
-                },
-                |err| {
-                    tracing::error!("Loopback stream error: {}", err);
-                },
-                None,
-            )
-            .map_err(|e| StreamAudioError::BackendError(e.to_string()))?;
-
-        tracing::info!("Loopback f32 stream created");
-        Ok(stream)
-    }
-}
-
 /// A running audio capture stream.
 ///
 /// Audio capture continues while this struct is held. When dropped, the
@@ -402,7 +234,7 @@ enum CaptureStreamInner {
     /// CPAL audio device stream.
     Cpal(Stream),
     /// System audio backend stream (holds boxed trait object for cleanup).
-    #[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
     SystemAudio(Box<dyn std::any::Any + Send>),
 }
 
@@ -415,9 +247,8 @@ impl CaptureStream {
     }
 
     /// Create a `CaptureStream` from a system audio backend.
-    /// Used by mock backend for testing; may be used by future non-CPAL backends.
-    #[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
-    #[allow(dead_code)]
+    /// Used by native SCK backend and mock backend for testing.
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
     pub(crate) fn from_system_audio<T: Send + 'static>(stream: T) -> Self {
         Self {
             inner: CaptureStreamInner::SystemAudio(Box::new(stream)),

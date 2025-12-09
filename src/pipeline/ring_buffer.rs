@@ -79,7 +79,20 @@ impl AudioBuffer {
 
     /// Returns true if enough samples are available for a complete chunk.
     pub fn has_chunk(&self) -> bool {
-        self.available() >= self.chunk_size
+        let available = self.available();
+        let has = available >= self.chunk_size;
+        // Log periodically to debug ring buffer state
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if count % 1000 == 0 {
+            tracing::trace!(
+                "AudioBuffer::has_chunk: available={}, chunk_size={}, has={}",
+                available,
+                self.chunk_size,
+                has
+            );
+        }
+        has
     }
 
     /// Drains all remaining samples from the buffer.

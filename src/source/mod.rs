@@ -6,11 +6,9 @@
 mod device;
 mod mock;
 mod source_id;
-#[cfg(any(feature = "system-audio", feature = "screencapturekit"))]
+#[cfg(all(target_os = "macos", feature = "sck-native"))]
 pub mod system_audio;
 
-#[cfg(all(target_os = "macos", feature = "system-audio"))]
-pub use device::LoopbackDevice;
 pub use device::{AudioDevice, CaptureStream, DeviceConfig};
 pub use mock::MockSource;
 pub use source_id::SourceId;

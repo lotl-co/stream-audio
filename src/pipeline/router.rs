@@ -175,6 +175,13 @@ impl Router {
         // Handle direct routing (single source to sink)
         if let Some(source_id) = &chunk.source_id {
             let direct = table.direct_sinks(source_id);
+            tracing::trace!(
+                "Router: source={}, direct_sinks={:?}, ts={:?}, samples={}",
+                source_id,
+                direct,
+                chunk.timestamp,
+                chunk.samples.len()
+            );
             if !direct.is_empty() {
                 self.write_to_indices(chunk, direct).await;
             }

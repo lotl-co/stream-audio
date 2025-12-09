@@ -66,6 +66,8 @@ mod config;
 mod error;
 mod event;
 pub mod format;
+#[cfg(target_os = "macos")]
+pub mod platform;
 mod pipeline;
 mod session;
 mod sink;
@@ -82,8 +84,6 @@ pub use source::{
     default_input_device_name, list_input_devices, AudioDevice, DeviceConfig, MockSource, SourceId,
 };
 
-// Re-export ScreenCaptureKit types when feature is enabled
-#[cfg(feature = "screencapturekit")]
-pub use source::system_audio::{
-    AppIdentifier, CaptureTarget, ScreenCaptureKitConfig, SystemAudioEvent,
-};
+// Re-export system audio types when feature is enabled
+#[cfg(feature = "sck-native")]
+pub use source::system_audio::SystemAudioEvent;

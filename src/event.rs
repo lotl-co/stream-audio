@@ -39,6 +39,15 @@ use crate::source::SourceId;
 ///         StreamEvent::MergeIncomplete { window_id, missing } => {
 ///             eprintln!("Merge window {} incomplete, missing: {:?}", window_id, missing);
 ///         }
+///         StreamEvent::AudioConfigChanged { source_id, previous, current, message } => {
+///             eprintln!("Config changed for {}: {:?} -> {:?} ({})", source_id, previous, current, message);
+///         }
+///         StreamEvent::AudioFlowStopped { source_id, silent_duration_ms } => {
+///             eprintln!("Audio stopped for {}: silent for {}ms", source_id, silent_duration_ms);
+///         }
+///         StreamEvent::AudioFlowResumed { source_id } => {
+///             eprintln!("Audio resumed for {}", source_id);
+///         }
 ///     }
 /// }
 /// ```
@@ -100,6 +109,49 @@ pub enum StreamEvent {
         window_id: u64,
         /// Sources that didn't contribute to this window.
         missing: Vec<SourceId>,
+    },
+
+    /// Audio device configuration changed during capture.
+    ///
+    /// This typically happens with Bluetooth devices when activating the
+    /// microphone causes a profile switch (e.g., A2DP to HFP), reducing
+    /// audio quality from 44.1kHz stereo to 16kHz mono.
+    ///
+    /// The capture adapts automatically to the new configuration.
+    AudioConfigChanged {
+        /// Source affected by the config change.
+        source_id: SourceId,
+        /// Previous configuration (sample_rate, channels).
+        previous: (u32, u16),
+        /// Current configuration (sample_rate, channels).
+        current: (u32, u16),
+        /// Human-readable explanation of the change.
+        message: String,
+    },
+
+    /// Audio flow stopped - no samples received for an extended period.
+    ///
+    /// This can indicate device disconnection, permission issues, or
+    /// system audio configuration problems. The capture continues
+    /// running and will emit [`AudioFlowResumed`] if audio returns.
+    ///
+    /// [`AudioFlowResumed`]: StreamEvent::AudioFlowResumed
+    AudioFlowStopped {
+        /// Source that stopped producing audio.
+        source_id: SourceId,
+        /// Duration of silence before this event was emitted.
+        silent_duration_ms: u64,
+    },
+
+    /// Audio flow resumed after being stopped.
+    ///
+    /// Emitted when audio starts flowing again after an
+    /// [`AudioFlowStopped`] event.
+    ///
+    /// [`AudioFlowStopped`]: StreamEvent::AudioFlowStopped
+    AudioFlowResumed {
+        /// Source that resumed producing audio.
+        source_id: SourceId,
     },
 }
 
