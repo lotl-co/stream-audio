@@ -161,10 +161,27 @@ final class SCKAudioSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
     // MARK: - SCStreamOutput
 
+    private var callbackCount = 0
+    private var lastLogTime: Date = Date()
+
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         // Ignore screen callbacks (needed for audio to work on macOS Sonoma+)
         guard type == .audio else { return }
-        guard isRunning else { return }
+
+        callbackCount += 1
+        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+
+        // Log every callback for first 2 seconds, then every 50th callback
+        let timeSinceStart = Date().timeIntervalSince(lastLogTime)
+        if callbackCount <= 20 || callbackCount % 50 == 0 {
+            NSLog("[SCK] Callback #%d: frames=%d, running=%d, time=%.2fs",
+                  callbackCount, frameCount, isRunning ? 1 : 0, timeSinceStart)
+        }
+
+        guard isRunning else {
+            NSLog("[SCK] Callback #%d REJECTED: isRunning=false", callbackCount)
+            return
+        }
 
         // Use Apple's proper APIs to handle any audio format adaptively
         do {

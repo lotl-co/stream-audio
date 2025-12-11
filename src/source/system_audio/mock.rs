@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn test_mock_backend_with_samples() {
         let samples = vec![100, 200, 300, 400];
-        let backend = Box::new(MockSystemAudioBackend::with_samples(samples.clone()));
+        let backend = MockSystemAudioBackend::with_samples(samples.clone());
 
         // Need sck-native feature to actually start capture
         #[cfg(all(target_os = "macos", feature = "sck-native"))]

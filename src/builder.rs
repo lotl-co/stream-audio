@@ -339,6 +339,22 @@ impl StreamAudioBuilder {
         Ok(())
     }
 
+    /// Creates the capture configuration from resolved audio parameters.
+    fn create_capture_config(
+        &self,
+        audio_config: &ResolvedAudioConfig,
+        source_id: SourceId,
+    ) -> CaptureConfig {
+        CaptureConfig {
+            device_sample_rate: audio_config.device_sample_rate,
+            device_channels: audio_config.device_channels,
+            target_sample_rate: audio_config.target_sample_rate,
+            target_channels: audio_config.target_channels,
+            chunk_duration: self.config.chunk_duration,
+            source_id: Some(source_id),
+        }
+    }
+
     /// Start audio capture.
     ///
     /// Returns a [`Session`] handle to control the capture.
@@ -504,20 +520,9 @@ impl StreamAudioBuilder {
         capture_streams: &mut Vec<crate::source::CaptureStream>,
     ) -> Result<(), StreamAudioError> {
         let audio_config = self.resolve_source_device(source)?;
-
-        // Extract config values before consuming the source
-        let capture_config = CaptureConfig {
-            device_sample_rate: audio_config.device_sample_rate,
-            device_channels: audio_config.device_channels,
-            target_sample_rate: audio_config.target_sample_rate,
-            target_channels: audio_config.target_channels,
-            chunk_duration: self.config.chunk_duration,
-            source_id: Some(source_id.clone()),
-        };
-
-        // Now consume the source (moves backend into CaptureStream for system audio)
         let (capture_stream, ring_consumer) = audio_config.source.start_capture()?;
 
+        let capture_config = self.create_capture_config(&audio_config, source_id.clone());
         let capture_handle = spawn_capture_bridge(
             ring_consumer,
             &capture_config,
