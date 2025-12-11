@@ -85,19 +85,27 @@ final class SCKAudioSession: NSObject, SCStreamOutput, SCStreamDelegate {
                 // Create stream
                 let stream = SCStream(filter: filter, configuration: config, delegate: self)
 
-                // Add audio output handler
+                // Add output handlers - BOTH screen and audio are needed
+                // Without screen output, audio callbacks won't fire (macOS Sonoma+)
+                try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue.global(qos: .utility))
                 try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: DispatchQueue.global(qos: .userInteractive))
+
+                // Store stream and set running BEFORE starting capture
+                // (callbacks may arrive before startCapture() returns)
+                self.stream = stream
+                self.isRunning = true
 
                 // Start capture
                 try await stream.startCapture()
-
-                self.stream = stream
-                self.isRunning = true
                 result = .ok
             } catch let error as SCStreamError {
+                self.isRunning = false
+                self.stream = nil
                 self.setError(error.localizedDescription)
                 result = self.mapSCStreamError(error)
             } catch {
+                self.isRunning = false
+                self.stream = nil
                 self.setError(error.localizedDescription)
                 result = .captureFailed
             }
@@ -109,13 +117,22 @@ final class SCKAudioSession: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stop() {
-        guard isRunning, let stream = stream else { return }
-
+        // Idempotent - safe to call multiple times
+        let wasRunning = isRunning
         isRunning = false
+
+        guard let stream = stream else { return }
         self.stream = nil
 
-        Task {
-            try? await stream.stopCapture()
+        if wasRunning {
+            // Use semaphore to wait for async stop to complete
+            let semaphore = DispatchSemaphore(value: 0)
+            Task {
+                try? await stream.stopCapture()
+                semaphore.signal()
+            }
+            // Wait up to 1 second for stop to complete
+            _ = semaphore.wait(timeout: .now() + 1.0)
         }
     }
 
@@ -145,31 +162,63 @@ final class SCKAudioSession: NSObject, SCStreamOutput, SCStreamDelegate {
     // MARK: - SCStreamOutput
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        // Ignore screen callbacks (needed for audio to work on macOS Sonoma+)
         guard type == .audio else { return }
         guard isRunning else { return }
 
-        // Extract audio buffer list
-        guard let blockBuffer = sampleBuffer.dataBuffer else { return }
+        // Use Apple's proper APIs to handle any audio format adaptively
+        do {
+            try sampleBuffer.withAudioBufferList { audioBufferList, blockBuffer in
+                // Get actual format from the sample buffer (adaptive detection)
+                guard let formatDesc = sampleBuffer.formatDescription,
+                      let asbdPtr = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else {
+                    return
+                }
+                var asbd = asbdPtr.pointee
+                guard let format = AVAudioFormat(streamDescription: &asbd) else {
+                    return
+                }
 
-        var length = 0
-        var dataPointer: UnsafeMutablePointer<Int8>?
+                let frameCount = AVAudioFrameCount(CMSampleBufferGetNumSamples(sampleBuffer))
+                guard frameCount > 0 else { return }
 
-        let status = CMBlockBufferGetDataPointer(
-            blockBuffer,
-            atOffset: 0,
-            lengthAtOffsetOut: nil,
-            totalLengthOut: &length,
-            dataPointerOut: &dataPointer
-        )
+                // Create PCM buffer with detected format
+                guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+                    return
+                }
+                pcmBuffer.frameLength = frameCount
 
-        guard status == noErr, let data = dataPointer else { return }
+                // Copy PCM data into the buffer (handles format conversion)
+                let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
+                    sampleBuffer,
+                    at: 0,
+                    frameCount: Int32(frameCount),
+                    into: pcmBuffer.mutableAudioBufferList
+                )
+                guard status == noErr else { return }
 
-        // Audio data is interleaved float samples
-        let floatPointer = UnsafeRawPointer(data).assumingMemoryBound(to: Float.self)
-        let frameCount = length / (MemoryLayout<Float>.size * channelCount)
+                // Extract float data (AVAudioPCMBuffer provides float32 via floatChannelData)
+                guard let floatData = pcmBuffer.floatChannelData else { return }
 
-        // Call the C callback
-        callback(context, floatPointer, frameCount, UInt32(channelCount), UInt32(sampleRate))
+                let channels = Int(format.channelCount)
+                let frames = Int(frameCount)
+
+                // Convert non-interleaved to interleaved for our callback contract
+                var interleaved = [Float](repeating: 0, count: frames * channels)
+                for frame in 0..<frames {
+                    for ch in 0..<channels {
+                        interleaved[frame * channels + ch] = floatData[ch][frame]
+                    }
+                }
+
+                // Call the C callback with interleaved float32 data
+                interleaved.withUnsafeBufferPointer { ptr in
+                    self.callback(self.context, ptr.baseAddress, frames, UInt32(channels), UInt32(format.sampleRate))
+                }
+            }
+        } catch {
+            // Silently ignore errors - audio capture continues
+        }
     }
 
     // MARK: - SCStreamDelegate

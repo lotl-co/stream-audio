@@ -203,9 +203,20 @@ impl SCKNativeBackend {
 
 impl Drop for SCKNativeBackend {
     fn drop(&mut self) {
+        // Signal callbacks to stop processing
         self.context.is_active.store(false, Ordering::SeqCst);
+
+        // Ensure capture is stopped (may have already been called by SessionWrapper)
+        // sck_audio_stop is idempotent - safe to call multiple times
         unsafe {
             sck_audio_stop(SCKAudioSessionRef(self.session.0));
+        }
+
+        // Give any in-flight callbacks time to complete
+        // 200ms should be enough for Swift async operations to finish
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        unsafe {
             sck_audio_destroy(SCKAudioSessionRef(self.session.0));
         }
     }
@@ -233,6 +244,7 @@ impl SystemAudioBackend for SCKNativeBackend {
         // Start capture
         let result = unsafe { sck_audio_start(SCKAudioSessionRef(self.session.0)) };
         let error = SCKError::from_i32(result);
+        tracing::debug!("sck_audio_start returned: {:?} (raw: {})", error, result);
 
         match error {
             SCKError::Ok => {
