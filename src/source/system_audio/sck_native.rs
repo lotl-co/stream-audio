@@ -223,7 +223,7 @@ impl Drop for SCKNativeBackend {
 }
 
 impl SystemAudioBackend for SCKNativeBackend {
-    fn start_capture(&self) -> Result<(CaptureStream, HeapCons<i16>), StreamAudioError> {
+    fn start_capture(self: Box<Self>) -> Result<(CaptureStream, HeapCons<i16>), StreamAudioError> {
         // Create a fresh ring buffer for this capture session
         let ring_buffer = HeapRb::<i16>::new(BUFFER_CAPACITY);
         let (producer, consumer) = ring_buffer.split();
@@ -248,15 +248,10 @@ impl SystemAudioBackend for SCKNativeBackend {
 
         match error {
             SCKError::Ok => {
-                // Create a wrapper to stop capture on drop
-                let session_ptr = self.session.0;
-                let is_active = Arc::clone(&self.context);
-
-                let stream = CaptureStream::from_system_audio(SessionWrapper {
-                    session_ptr,
-                    is_active,
-                });
-
+                // Move the entire backend into CaptureStream to keep it alive
+                // The backend owns the session handle and context, which must
+                // stay alive for the duration of capture.
+                let stream = CaptureStream::from_system_audio(self);
                 Ok((stream, consumer))
             }
             SCKError::PermissionDenied => {
@@ -306,23 +301,8 @@ impl SystemAudioBackend for SCKNativeBackend {
     }
 }
 
-/// Wrapper to stop capture when dropped
-struct SessionWrapper {
-    session_ptr: *mut c_void,
-    is_active: Arc<CallbackContext>,
-}
-
-// Safety: The pointer is only used to call sck_audio_stop
-unsafe impl Send for SessionWrapper {}
-
-impl Drop for SessionWrapper {
-    fn drop(&mut self) {
-        self.is_active.is_active.store(false, Ordering::SeqCst);
-        unsafe {
-            sck_audio_stop(SCKAudioSessionRef(self.session_ptr));
-        }
-    }
-}
+// Note: SCKNativeBackend is moved directly into CaptureStream via from_system_audio().
+// When the CaptureStream is dropped, SCKNativeBackend::drop() handles cleanup.
 
 #[cfg(test)]
 mod tests {

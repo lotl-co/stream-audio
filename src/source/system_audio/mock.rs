@@ -59,7 +59,7 @@ impl Default for MockSystemAudioBackend {
 }
 
 impl SystemAudioBackend for MockSystemAudioBackend {
-    fn start_capture(&self) -> Result<(CaptureStream, ringbuf::HeapCons<i16>), StreamAudioError> {
+    fn start_capture(self: Box<Self>) -> Result<(CaptureStream, ringbuf::HeapCons<i16>), StreamAudioError> {
         let ring_buffer = HeapRb::<i16>::new(MOCK_BUFFER_CAPACITY);
         let (mut producer, consumer) = ring_buffer.split();
 
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn test_mock_backend_with_samples() {
         let samples = vec![100, 200, 300, 400];
-        let backend = MockSystemAudioBackend::with_samples(samples.clone());
+        let backend = Box::new(MockSystemAudioBackend::with_samples(samples.clone()));
 
         // Need sck-native feature to actually start capture
         #[cfg(all(target_os = "macos", feature = "sck-native"))]

@@ -73,9 +73,12 @@ pub enum SystemAudioEvent {
 pub trait SystemAudioBackend: Send {
     /// Start capturing system audio.
     ///
-    /// Returns a capture stream handle (keeps capture alive) and
-    /// a ring buffer consumer for reading audio samples.
-    fn start_capture(&self) -> Result<(CaptureStream, HeapCons<i16>), StreamAudioError>;
+    /// Consumes the backend and returns a capture stream handle (keeps capture
+    /// alive) and a ring buffer consumer for reading audio samples.
+    ///
+    /// The backend is moved into the `CaptureStream` to ensure the underlying
+    /// resources stay alive for the duration of capture.
+    fn start_capture(self: Box<Self>) -> Result<(CaptureStream, HeapCons<i16>), StreamAudioError>;
 
     /// Returns the native sample rate and channel count.
     fn native_config(&self) -> (u32, u16);
