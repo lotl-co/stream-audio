@@ -520,9 +520,8 @@ impl StreamAudioBuilder {
         capture_streams: &mut Vec<crate::source::CaptureStream>,
     ) -> Result<(), StreamAudioError> {
         let audio_config = self.resolve_source_device(source)?;
-        let (capture_stream, ring_consumer) = audio_config.source.start_capture()?;
-
         let capture_config = self.create_capture_config(&audio_config, source_id.clone());
+        let (capture_stream, ring_consumer) = audio_config.source.start_capture()?;
         let capture_handle = spawn_capture_bridge(
             ring_consumer,
             &capture_config,
