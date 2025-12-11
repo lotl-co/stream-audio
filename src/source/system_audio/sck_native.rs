@@ -301,24 +301,6 @@ impl SystemAudioBackend for SCKNativeBackend {
     }
 }
 
-/// Wrapper to stop capture when dropped
-struct SessionWrapper {
-    session_ptr: *mut c_void,
-    is_active: Arc<CallbackContext>,
-}
-
-// Safety: The pointer is only used to call sck_audio_stop
-unsafe impl Send for SessionWrapper {}
-
-impl Drop for SessionWrapper {
-    fn drop(&mut self) {
-        self.is_active.is_active.store(false, Ordering::SeqCst);
-        unsafe {
-            sck_audio_stop(SCKAudioSessionRef(self.session_ptr));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
