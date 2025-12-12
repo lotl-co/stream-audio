@@ -12,9 +12,10 @@
 #![allow(unsafe_code)] // FFI requires unsafe
 
 use std::ffi::{c_char, c_void, CStr};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use parking_lot::Mutex;
 use ringbuf::traits::{Producer, Split};
 use ringbuf::{HeapCons, HeapProd, HeapRb};
 
@@ -96,9 +97,10 @@ extern "C" {
 
 /// Context passed to the Swift callback
 struct CallbackContext {
-    /// Producer is None until start_capture() is called
-    producer: std::sync::Mutex<Option<HeapProd<i16>>>,
-    overflow_count: std::sync::atomic::AtomicU64,
+    /// Producer is None until start_capture() is called.
+    /// Uses parking_lot::Mutex for faster, non-poisoning locks in the audio callback path.
+    producer: Mutex<Option<HeapProd<i16>>>,
+    overflow_count: AtomicU64,
     is_active: AtomicBool,
 }
 
@@ -120,9 +122,7 @@ unsafe extern "C" fn audio_callback(
         return;
     }
 
-    let Ok(mut guard) = ctx.producer.lock() else {
-        return;
-    };
+    let mut guard = ctx.producer.lock();
     let Some(ref mut producer) = *guard else {
         return; // Not yet initialized (start_capture not called)
     };
@@ -177,8 +177,8 @@ impl SCKNativeBackend {
         // Ring buffer is created in start_capture() to avoid allocating 2.7MB
         // that would be immediately discarded
         let context = Arc::new(CallbackContext {
-            producer: std::sync::Mutex::new(None),
-            overflow_count: std::sync::atomic::AtomicU64::new(0),
+            producer: Mutex::new(None),
+            overflow_count: AtomicU64::new(0),
             is_active: AtomicBool::new(false),
         });
 
@@ -262,12 +262,7 @@ impl SystemAudioBackend for SCKNativeBackend {
 
         // Set the producer in the context
         {
-            let Ok(mut guard) = self.context.producer.lock() else {
-                return Err(StreamAudioError::SystemAudioRuntimeFailure {
-                    context: "lock producer".into(),
-                    cause: "mutex poisoned".into(),
-                });
-            };
+            let mut guard = self.context.producer.lock();
             *guard = Some(producer);
         }
 
