@@ -247,9 +247,27 @@ impl Drop for SCKNativeBackend {
         // Stop capture. After this, no new callbacks will be dispatched.
         unsafe { sck_audio_stop(SCKAudioSessionRef(self.session.0)) }
 
-        // Let in-flight callbacks drain. 50ms is conservative—callbacks complete
-        // in <1ms. Alternatives (condvars, refcounting) add hot-path overhead for
-        // no real benefit. The is_active check makes this fail-safe regardless.
+        // WHY SLEEP INSTEAD OF ATOMIC COUNTER:
+        // We could track in-flight callbacks with an AtomicU32 counter (increment on
+        // entry, decrement on exit) and spin-wait for zero. However:
+        //
+        // 1. Hot-path cost: Adds 2 atomic ops per callback (~20ns each). At 48kHz with
+        //    1024-frame buffers, callbacks fire every ~20ms, so overhead is negligible
+        //    (<0.001%), but audio code should minimize unnecessary work.
+        //
+        // 2. Marginal benefit: The 50ms is only paid once on teardown. Users won't
+        //    notice 50ms when stopping a recording.
+        //
+        // 3. Fail-safe: The is_active check causes callbacks to no-op, so even if a
+        //    callback somehow runs after destroy, it exits before touching state.
+        //
+        // REVISIT IF:
+        // - Crashes observed on teardown (would indicate 50ms insufficient)
+        // - Need sub-50ms shutdown latency (e.g., rapid start/stop cycling)
+        // - Profiling shows the sleep blocks something important
+        //
+        // If changing, consider a hybrid: check atomic counter first, only sleep if
+        // callbacks are in-flight, with a timeout and warning log.
         std::thread::sleep(std::time::Duration::from_millis(50));
 
         // Now safe to destroy—all callbacks have either completed or early-returned.
