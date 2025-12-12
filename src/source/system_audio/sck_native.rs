@@ -153,8 +153,19 @@ unsafe extern "C" fn audio_callback(
 /// Native ScreenCaptureKit backend for macOS system audio capture.
 pub struct SCKNativeBackend {
     session: SCKAudioSessionRef,
+    /// The context used by callbacks. We keep an Arc for Rust-side access.
     context: Arc<CallbackContext>,
+    /// Raw pointer given to Swift via `Arc::into_raw()`. We must reclaim this
+    /// with `Arc::from_raw()` in Drop to avoid leaking the refcount.
+    /// This is the same allocation as `context`, just with an extra refcount.
+    context_raw_for_swift: *const CallbackContext,
 }
+
+// SAFETY: SCKNativeBackend can be sent between threads because:
+// - `session` is Send (we impl'd it above - Swift manages thread safety)
+// - `context` is Arc<CallbackContext> which is Send
+// - `context_raw_for_swift` points to the same Arc allocation, which is Send
+unsafe impl Send for SCKNativeBackend {}
 
 impl SCKNativeBackend {
     /// Create a new native ScreenCaptureKit backend.
@@ -174,18 +185,28 @@ impl SCKNativeBackend {
             is_active: AtomicBool::new(false),
         });
 
-        let context_ptr = Arc::as_ptr(&context) as *mut c_void;
+        // Clone the Arc and convert to raw pointer for Swift.
+        // This increments the refcount, giving Swift "ownership" of one reference.
+        // We MUST call Arc::from_raw() in Drop to reclaim this refcount.
+        let context_raw_for_swift = Arc::into_raw(Arc::clone(&context));
+        let context_ptr = context_raw_for_swift as *mut c_void;
 
         // Create Swift session
         let session = unsafe { sck_audio_create(audio_callback, context_ptr) };
 
         if session.0.is_null() {
+            // Reclaim the raw pointer since we won't be storing it
+            unsafe { drop(Arc::from_raw(context_raw_for_swift)) };
             return Err(StreamAudioError::SystemAudioUnavailable {
                 reason: "Failed to create SCK session (macOS 13+ required)".into(),
             });
         }
 
-        Ok(Self { session, context })
+        Ok(Self {
+            session,
+            context,
+            context_raw_for_swift,
+        })
     }
 
     fn get_error_message(&self) -> Option<String> {
@@ -202,21 +223,36 @@ impl SCKNativeBackend {
 
 impl Drop for SCKNativeBackend {
     fn drop(&mut self) {
-        // Signal callbacks to stop processing
+        // Signal callbacks to stop processing immediately.
+        // Any callback that checks is_active after this point will return early.
         self.context.is_active.store(false, Ordering::SeqCst);
 
-        // Ensure capture is stopped (may have already been called by SessionWrapper)
-        // sck_audio_stop is idempotent - safe to call multiple times
+        // Stop capture. Swift's stop() waits synchronously for SCStream.stopCapture(),
+        // so after this returns, no NEW callbacks will be dispatched.
+        // sck_audio_stop is idempotent - safe to call multiple times.
         unsafe {
             sck_audio_stop(SCKAudioSessionRef(self.session.0));
         }
 
-        // Give any in-flight callbacks time to complete
-        // 200ms should be enough for Swift async operations to finish
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        // Brief wait for any in-flight callbacks that were already dispatched
+        // but haven't yet checked is_active. Swift's GCD queues are fast, so
+        // 50ms is generous. The callback checks is_active at the top, so even
+        // if timing is off, the callback will early-return without touching
+        // the producer.
+        std::thread::sleep(std::time::Duration::from_millis(50));
 
+        // Destroy the Swift session. This releases Swift's SCKAudioSession object.
         unsafe {
             sck_audio_destroy(SCKAudioSessionRef(self.session.0));
+        }
+
+        // Reclaim the Arc refcount we gave to Swift via Arc::into_raw().
+        // This decrements the refcount. Combined with our stored Arc dropping,
+        // the CallbackContext will be freed when this Drop completes.
+        // SAFETY: context_raw_for_swift was created by Arc::into_raw() in new()
+        // and has not been reclaimed elsewhere.
+        unsafe {
+            drop(Arc::from_raw(self.context_raw_for_swift));
         }
     }
 }
