@@ -627,4 +627,44 @@ mod tests {
 
         assert_eq!(config.source_id.as_ref().unwrap().as_str(), "mic");
     }
+
+    #[test]
+    fn test_calculate_rms_db_normal() {
+        // Full-scale sine wave has RMS of ~0.707, which is about -3dB
+        let sum_squares = (i16::MAX as f64).powi(2) * 100.0; // 100 samples at max
+        let rms_db = calculate_rms_db(sum_squares, 100);
+        assert!((rms_db - 0.0).abs() < 0.1); // Should be ~0dB for full scale
+    }
+
+    #[test]
+    fn test_calculate_rms_db_silence() {
+        let rms_db = calculate_rms_db(0.0, 100);
+        assert_eq!(rms_db, SILENCE_FLOOR_DB);
+    }
+
+    #[test]
+    fn test_calculate_rms_db_empty() {
+        let rms_db = calculate_rms_db(0.0, 0);
+        assert_eq!(rms_db, SILENCE_FLOOR_DB);
+    }
+
+    #[test]
+    fn test_calculate_dc_offset_zero() {
+        let dc = calculate_dc_offset(0, 100);
+        assert_eq!(dc, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_dc_offset_positive() {
+        // All samples at half max = 50% DC offset
+        let sum = (i16::MAX as i64 / 2) * 100;
+        let dc = calculate_dc_offset(sum, 100);
+        assert!((dc - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_calculate_dc_offset_empty() {
+        let dc = calculate_dc_offset(1000, 0);
+        assert_eq!(dc, 0.0);
+    }
 }
