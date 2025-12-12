@@ -78,6 +78,7 @@ impl AudioBuffer {
     }
 
     /// Returns true if enough samples are available for a complete chunk.
+    #[allow(clippy::items_after_statements)]
     pub fn has_chunk(&self) -> bool {
         let available = self.available();
         let has = available >= self.chunk_size;

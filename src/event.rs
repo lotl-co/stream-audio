@@ -106,9 +106,9 @@ pub enum StreamEvent {
     AudioConfigChanged {
         /// Source affected by the config change.
         source_id: SourceId,
-        /// Previous configuration (sample_rate, channels).
+        /// Previous configuration (`sample_rate`, `channels`).
         previous: (u32, u16),
-        /// Current configuration (sample_rate, channels).
+        /// Current configuration (`sample_rate`, `channels`).
         current: (u32, u16),
         /// Human-readable explanation of the change.
         message: String,

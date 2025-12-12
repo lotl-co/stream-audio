@@ -66,9 +66,9 @@ mod config;
 mod error;
 mod event;
 pub mod format;
+mod pipeline;
 #[cfg(target_os = "macos")]
 pub mod platform;
-mod pipeline;
 mod session;
 mod sink;
 pub mod source;

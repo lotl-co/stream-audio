@@ -83,8 +83,7 @@ type SCKAudioCallback = unsafe extern "C" fn(
 
 #[link(name = "sck_audio")]
 extern "C" {
-    fn sck_audio_create(callback: SCKAudioCallback, context: *mut c_void)
-        -> SCKAudioSessionRef;
+    fn sck_audio_create(callback: SCKAudioCallback, context: *mut c_void) -> SCKAudioSessionRef;
     fn sck_audio_destroy(session: SCKAudioSessionRef);
     fn sck_audio_start(session: SCKAudioSessionRef) -> i32;
     fn sck_audio_stop(session: SCKAudioSessionRef);
@@ -134,8 +133,7 @@ unsafe extern "C" fn audio_callback(
     let mut overflow = 0u64;
     for &sample_f32 in sample_slice {
         // Convert f32 [-1.0, 1.0] to i16
-        let sample_i16 =
-            (sample_f32 * I16_MAX_SYMMETRIC).clamp(I16_MIN_F32, I16_MAX_F32) as i16;
+        let sample_i16 = (sample_f32 * I16_MAX_SYMMETRIC).clamp(I16_MIN_F32, I16_MAX_F32) as i16;
 
         if producer.try_push(sample_i16).is_err() {
             overflow += 1;
@@ -143,8 +141,7 @@ unsafe extern "C" fn audio_callback(
     }
 
     if overflow > 0 {
-        ctx.overflow_count
-            .fetch_add(overflow, Ordering::Relaxed);
+        ctx.overflow_count.fetch_add(overflow, Ordering::Relaxed);
     }
 }
 
@@ -321,10 +318,7 @@ impl SystemAudioBackend for SCKNativeBackend {
     }
 
     fn poll_events(&self) -> Vec<SystemAudioEvent> {
-        let overflow = self
-            .context
-            .overflow_count
-            .swap(0, Ordering::Relaxed);
+        let overflow = self.context.overflow_count.swap(0, Ordering::Relaxed);
 
         if overflow > 0 {
             vec![SystemAudioEvent::Overflow {

@@ -59,7 +59,9 @@ impl Default for MockSystemAudioBackend {
 }
 
 impl SystemAudioBackend for MockSystemAudioBackend {
-    fn start_capture(self: Box<Self>) -> Result<(CaptureStream, ringbuf::HeapCons<i16>), StreamAudioError> {
+    fn start_capture(
+        self: Box<Self>,
+    ) -> Result<(CaptureStream, ringbuf::HeapCons<i16>), StreamAudioError> {
         let ring_buffer = HeapRb::<i16>::new(MOCK_BUFFER_CAPACITY);
         let (mut producer, consumer) = ring_buffer.split();
 

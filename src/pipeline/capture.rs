@@ -21,7 +21,7 @@ use crate::source::SourceId;
 use crate::{AudioChunk, StreamEvent};
 
 /// Threshold for detecting audio flow stoppage.
-/// If no non-zero samples are received for this duration, emit AudioFlowStopped.
+/// If no non-zero samples are received for this duration, emit `AudioFlowStopped`.
 const SILENCE_THRESHOLD: Duration = Duration::from_millis(500);
 
 /// Monitors audio flow and detects when audio stops/resumes.
@@ -54,7 +54,10 @@ impl FlowMonitor {
             if was_stopped {
                 // Audio resumed after being stopped
                 return Some(StreamEvent::AudioFlowResumed {
-                    source_id: self.source_id.clone().unwrap_or_else(|| SourceId::new("default")),
+                    source_id: self
+                        .source_id
+                        .clone()
+                        .unwrap_or_else(|| SourceId::new("default")),
                 });
             }
         } else {
@@ -62,7 +65,10 @@ impl FlowMonitor {
             if self.is_flowing && silence_duration > SILENCE_THRESHOLD {
                 self.is_flowing = false;
                 return Some(StreamEvent::AudioFlowStopped {
-                    source_id: self.source_id.clone().unwrap_or_else(|| SourceId::new("default")),
+                    source_id: self
+                        .source_id
+                        .clone()
+                        .unwrap_or_else(|| SourceId::new("default")),
                     silent_duration_ms: silence_duration.as_millis() as u64,
                 });
             }

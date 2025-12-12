@@ -121,7 +121,9 @@ pub fn create_system_audio_backend() -> Result<Box<dyn SystemAudioBackend>, Stre
     #[cfg(all(target_os = "macos", not(feature = "sck-native")))]
     {
         return Err(StreamAudioError::SystemAudioUnavailable {
-            reason: "sck-native feature not enabled - add `features = [\"sck-native\"]` to Cargo.toml".into(),
+            reason:
+                "sck-native feature not enabled - add `features = [\"sck-native\"]` to Cargo.toml"
+                    .into(),
         });
     }
 

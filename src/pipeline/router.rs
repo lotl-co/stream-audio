@@ -49,7 +49,7 @@ impl Router {
     pub fn with_routing(
         sinks: Vec<Arc<dyn Sink>>,
         sink_routes: &[SinkRoute],
-        source_ids: Vec<SourceId>,
+        source_ids: &[SourceId],
         config: StreamConfig,
     ) -> Result<Self, crate::StreamAudioError> {
         // Build routing table from sink_routes
@@ -358,7 +358,7 @@ mod tests {
         let router = Router::with_routing(
             vec![sink_mic.clone(), sink_speaker.clone()],
             &routes,
-            vec![SourceId::new("mic"), SourceId::new("speaker")],
+            &[SourceId::new("mic"), SourceId::new("speaker")],
             StreamConfig::default(),
         )
         .unwrap();
@@ -387,7 +387,7 @@ mod tests {
         let router = Router::with_routing(
             vec![sink_broadcast.clone(), sink_mic_only.clone()],
             &routes,
-            vec![SourceId::new("mic"), SourceId::new("speaker")],
+            &[SourceId::new("mic"), SourceId::new("speaker")],
             StreamConfig::default(),
         )
         .unwrap();

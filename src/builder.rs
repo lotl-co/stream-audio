@@ -93,7 +93,7 @@ enum ResolvedSource {
 
 impl ResolvedSource {
     /// Start capture and return the stream + ring buffer consumer.
-    /// Consumes self for system audio backends (they move into the CaptureStream).
+    /// Consumes self for system audio backends (they move into the `CaptureStream`).
     fn start_capture(
         self,
     ) -> Result<(crate::source::CaptureStream, ringbuf::HeapCons<i16>), StreamAudioError> {
@@ -341,7 +341,7 @@ impl StreamAudioBuilder {
         let mut router = Router::with_routing(
             self.sinks.clone(),
             &self.sink_routes,
-            source_ids,
+            &source_ids,
             self.config.clone(),
         )?;
         if let Some(callback) = self.event_callback.clone() {
@@ -357,10 +357,10 @@ impl StreamAudioBuilder {
         // This handles Bluetooth profile switching: when mic starts, Bluetooth may
         // switch from A2DP (high quality output) to HFP (low quality bidirectional).
         // By starting system audio LAST, we capture at the actual (possibly degraded) config.
-        let (regular_sources, system_audio_sources): (Vec<_>, Vec<_>) =
-            self.sources
-                .iter()
-                .partition(|(_, source)| !Self::is_system_audio_source(source));
+        let (regular_sources, system_audio_sources): (Vec<_>, Vec<_>) = self
+            .sources
+            .iter()
+            .partition(|(_, source)| !Self::is_system_audio_source(source));
 
         let mut capture_handles = Vec::new();
         let mut capture_streams = Vec::new();
@@ -390,9 +390,10 @@ impl StreamAudioBuilder {
         for (source_id, source) in &system_audio_sources {
             // Emit config change warning if Bluetooth profile switched
             #[cfg(all(target_os = "macos", feature = "sck-native"))]
-            if let (Some(initial), Some(current)) =
-                (initial_output_config.as_ref(), post_mic_output_config.as_ref())
-            {
+            if let (Some(initial), Some(current)) = (
+                initial_output_config.as_ref(),
+                post_mic_output_config.as_ref(),
+            ) {
                 if initial != current {
                     if let Some(ref callback) = self.event_callback {
                         callback(StreamEvent::AudioConfigChanged {
@@ -463,6 +464,7 @@ impl StreamAudioBuilder {
     }
 
     /// Starts a single source and adds it to the capture handles/streams.
+    #[allow(clippy::too_many_arguments)]
     fn start_single_source(
         &self,
         source_id: &SourceId,
@@ -474,7 +476,8 @@ impl StreamAudioBuilder {
         session_start: std::time::Instant,
     ) -> Result<(), StreamAudioError> {
         let audio_config = self.resolve_source_device(source)?;
-        let capture_config = self.create_capture_config(&audio_config, source_id.clone(), session_start);
+        let capture_config =
+            self.create_capture_config(&audio_config, source_id.clone(), session_start);
         let (capture_stream, ring_consumer) = audio_config.source.start_capture()?;
         let capture_handle = spawn_capture_bridge(
             ring_consumer,

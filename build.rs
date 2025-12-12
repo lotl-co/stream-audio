@@ -1,7 +1,7 @@
 //! Build script for stream-audio.
 //!
 //! When the `sck-native` feature is enabled on macOS, this script:
-//! 1. Builds the Swift SCKAudioCapture library
+//! 1. Builds the Swift `SCKAudioCapture` library
 //! 2. Links the resulting dylib and required frameworks
 
 use std::env;
@@ -18,6 +18,10 @@ fn main() {
 
 #[cfg(target_os = "macos")]
 fn build_swift_library() {
+    // In build scripts, panicking on errors is the standard pattern since
+    // there's no way to propagate errors to Cargo except by failing the build.
+    #![allow(clippy::expect_used)]
+
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let manifest_path = PathBuf::from(&manifest_dir);
     let swift_dir = manifest_path.join("swift");
@@ -35,18 +39,18 @@ fn build_swift_library() {
         .status()
         .expect("Failed to run swift build.sh - is Swift installed?");
 
-    if !status.success() {
-        panic!("Swift build failed. Check swift/build.sh output.");
-    }
+    assert!(
+        status.success(),
+        "Swift build failed. Check swift/build.sh output."
+    );
 
     // Verify the library was built
     let dylib_path = lib_dir.join("libsck_audio.dylib");
-    if !dylib_path.exists() {
-        panic!(
-            "Swift library not found at {}. Build may have failed.",
-            dylib_path.display()
-        );
-    }
+    assert!(
+        dylib_path.exists(),
+        "Swift library not found at {}. Build may have failed.",
+        dylib_path.display()
+    );
 
     // Link the dynamic library
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
