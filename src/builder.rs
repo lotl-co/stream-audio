@@ -125,6 +125,12 @@ struct ResolvedAudioConfig {
     device_channels: u16,
 }
 
+/// Result of starting a single audio source.
+struct StartedSource {
+    handle: tokio::task::JoinHandle<()>,
+    stream: crate::source::CaptureStream,
+}
+
 /// Builder for configuring and starting audio capture.
 ///
 /// Use [`StreamAudio::builder()`] to create a new builder.
@@ -327,17 +333,33 @@ impl StreamAudioBuilder {
     pub async fn start(self) -> Result<Session, StreamAudioError> {
         self.validate()?;
 
-        // Shared session epoch for synchronized timestamps across all sources
         let session_start = std::time::Instant::now();
-
         let (chunk_tx, chunk_rx) = mpsc::channel(CHUNK_CHANNEL_CAPACITY);
         let (router_cmd_tx, router_cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
-
         let state = Arc::new(SessionState::new());
 
-        // Create router with routing
-        let source_ids = self.source_ids();
+        let router_handle = self.start_router(chunk_rx, router_cmd_rx).await?;
+        let (capture_handles, capture_streams) =
+            self.start_all_sources(&chunk_tx, &state, session_start)?;
 
+        Ok(Session::new(
+            state,
+            router_cmd_tx,
+            router_handle,
+            capture_handles,
+            capture_streams,
+            self.source_ids(),
+            self.event_callback.clone(),
+        ))
+    }
+
+    /// Creates and starts the router, returning its task handle.
+    async fn start_router(
+        &self,
+        chunk_rx: mpsc::Receiver<crate::chunk::AudioChunk>,
+        router_cmd_rx: mpsc::Receiver<crate::pipeline::RouterCommand>,
+    ) -> Result<tokio::task::JoinHandle<()>, StreamAudioError> {
+        let source_ids = self.source_ids();
         let mut router = Router::with_routing(
             self.sinks.clone(),
             &self.sink_routes,
@@ -349,14 +371,25 @@ impl StreamAudioBuilder {
         }
         router.start_sinks().await?;
 
-        let router_handle = tokio::spawn(async move {
+        Ok(tokio::spawn(async move {
             router.run(chunk_rx, router_cmd_rx).await;
-        });
+        }))
+    }
 
-        // Separate sources: start non-system-audio sources first, then system audio.
-        // This handles Bluetooth profile switching: when mic starts, Bluetooth may
-        // switch from A2DP (high quality output) to HFP (low quality bidirectional).
-        // By starting system audio LAST, we capture at the actual (possibly degraded) config.
+    /// Starts all audio sources in the correct order.
+    ///
+    /// Regular sources (microphones) start first, then system audio sources.
+    /// This ordering handles Bluetooth profile switching: when a mic starts,
+    /// Bluetooth may switch from A2DP (high quality output) to HFP (low quality
+    /// bidirectional). By starting system audio last, we capture at the actual
+    /// (possibly degraded) config.
+    fn start_all_sources(
+        &self,
+        chunk_tx: &mpsc::Sender<crate::chunk::AudioChunk>,
+        state: &Arc<SessionState>,
+        session_start: std::time::Instant,
+    ) -> Result<(Vec<tokio::task::JoinHandle<()>>, Vec<crate::source::CaptureStream>), StreamAudioError>
+    {
         let (regular_sources, system_audio_sources): (Vec<_>, Vec<_>) = self
             .sources
             .iter()
@@ -365,70 +398,64 @@ impl StreamAudioBuilder {
         let mut capture_handles = Vec::new();
         let mut capture_streams = Vec::new();
 
-        // Snapshot output device config before starting any sources
         #[cfg(all(target_os = "macos", feature = "sck-native"))]
         let initial_output_config = Self::query_output_device_config();
 
         for (source_id, source) in &regular_sources {
-            self.start_single_source(
-                source_id,
-                source,
-                &chunk_tx,
-                &state,
-                &mut capture_handles,
-                &mut capture_streams,
-                session_start,
-            )?;
+            let started =
+                self.start_single_source(source_id, source, chunk_tx, state, session_start)?;
+            capture_handles.push(started.handle);
+            capture_streams.push(started.stream);
         }
 
-        // Check if output config changed after starting regular sources
         #[cfg(all(target_os = "macos", feature = "sck-native"))]
         let post_mic_output_config = Self::query_output_device_config();
 
         for (source_id, source) in &system_audio_sources {
-            // Emit config change warning if Bluetooth profile switched
             #[cfg(all(target_os = "macos", feature = "sck-native"))]
-            if let (Some(initial), Some(current)) = (
+            self.emit_config_change_if_needed(
+                source_id,
                 initial_output_config.as_ref(),
                 post_mic_output_config.as_ref(),
-            ) {
-                if initial != current {
-                    if let Some(ref callback) = self.event_callback {
-                        callback(StreamEvent::AudioConfigChanged {
-                            source_id: source_id.clone(),
-                            previous: *initial,
-                            current: *current,
-                            message: format!(
-                                "Output device config changed from {}Hz/{}ch to {}Hz/{}ch. \
-                                 This may indicate Bluetooth profile switching (A2DP to HFP). \
-                                 System audio will capture at the new config.",
-                                initial.0, initial.1, current.0, current.1
-                            ),
-                        });
-                    }
-                }
-            }
+            );
 
-            self.start_single_source(
-                source_id,
-                source,
-                &chunk_tx,
-                &state,
-                &mut capture_handles,
-                &mut capture_streams,
-                session_start,
-            )?;
+            let started =
+                self.start_single_source(source_id, source, chunk_tx, state, session_start)?;
+            capture_handles.push(started.handle);
+            capture_streams.push(started.stream);
         }
 
-        Ok(Session::new(
-            state,
-            router_cmd_tx,
-            router_handle,
-            capture_handles,
-            capture_streams,
-            self.source_ids(),
-            self.event_callback.clone(),
-        ))
+        Ok((capture_handles, capture_streams))
+    }
+
+    /// Emits a config change event if the output device config changed.
+    ///
+    /// This detects Bluetooth profile switching (A2DP → HFP) that can occur
+    /// when microphone capture starts.
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
+    fn emit_config_change_if_needed(
+        &self,
+        source_id: &SourceId,
+        initial: Option<&(u32, u16)>,
+        current: Option<&(u32, u16)>,
+    ) {
+        if let (Some(initial), Some(current)) = (initial, current) {
+            if initial != current {
+                if let Some(ref callback) = self.event_callback {
+                    callback(StreamEvent::AudioConfigChanged {
+                        source_id: source_id.clone(),
+                        previous: *initial,
+                        current: *current,
+                        message: format!(
+                            "Output device config changed from {}Hz/{}ch to {}Hz/{}ch. \
+                             This may indicate Bluetooth profile switching (A2DP to HFP). \
+                             System audio will capture at the new config.",
+                            initial.0, initial.1, current.0, current.1
+                        ),
+                    });
+                }
+            }
+        }
     }
 
     /// Resolves a source's device or system audio backend.
@@ -461,23 +488,20 @@ impl StreamAudioBuilder {
         })
     }
 
-    /// Starts a single source and adds it to the capture handles/streams.
-    #[allow(clippy::too_many_arguments)]
+    /// Starts a single source and returns the capture handle and stream.
     fn start_single_source(
         &self,
         source_id: &SourceId,
         source: &AudioSource,
         chunk_tx: &mpsc::Sender<crate::chunk::AudioChunk>,
         state: &Arc<SessionState>,
-        capture_handles: &mut Vec<tokio::task::JoinHandle<()>>,
-        capture_streams: &mut Vec<crate::source::CaptureStream>,
         session_start: std::time::Instant,
-    ) -> Result<(), StreamAudioError> {
+    ) -> Result<StartedSource, StreamAudioError> {
         let audio_config = self.resolve_source_device(source)?;
         let capture_config =
             self.create_capture_config(&audio_config, source_id.clone(), session_start);
-        let (capture_stream, ring_consumer) = audio_config.source.start_capture()?;
-        let capture_handle = spawn_capture_bridge(
+        let (stream, ring_consumer) = audio_config.source.start_capture()?;
+        let handle = spawn_capture_bridge(
             ring_consumer,
             &capture_config,
             chunk_tx.clone(),
@@ -491,9 +515,7 @@ impl StreamAudioBuilder {
             });
         }
 
-        capture_handles.push(capture_handle);
-        capture_streams.push(capture_stream);
-        Ok(())
+        Ok(StartedSource { handle, stream })
     }
 
     /// Queries the current default output device configuration.

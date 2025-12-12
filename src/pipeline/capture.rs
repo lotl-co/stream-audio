@@ -198,6 +198,30 @@ impl GapMonitor {
     }
 }
 
+/// Effective silence floor for 16-bit audio in dB.
+const SILENCE_FLOOR_DB: f32 = -96.0;
+
+/// Calculates RMS level in dB relative to `i16::MAX`.
+fn calculate_rms_db(sum_squares: f64, sample_count: usize) -> f32 {
+    if sample_count == 0 {
+        return SILENCE_FLOOR_DB;
+    }
+    let rms = (sum_squares / sample_count as f64).sqrt();
+    if rms > 0.0 {
+        20.0 * (rms / i16::MAX as f64).log10() as f32
+    } else {
+        SILENCE_FLOOR_DB
+    }
+}
+
+/// Calculates DC offset as a ratio of `i16::MAX`.
+fn calculate_dc_offset(sum: i64, sample_count: usize) -> f32 {
+    if sample_count == 0 {
+        return 0.0;
+    }
+    (sum as f64 / sample_count as f64 / i16::MAX as f64) as f32
+}
+
 /// Monitors audio quality metrics per-chunk (peak, RMS, clipping, DC offset).
 ///
 /// Unlike `GapMonitor` which detects specific anomalies, `QualityMonitor` provides
@@ -247,16 +271,6 @@ impl QualityMonitor {
 
         self.total_clipped += clipped as u64;
 
-        let n = samples.len() as f64;
-        let rms = (sum_squares / n).sqrt();
-        // Convert to dB relative to i16::MAX, clamping to avoid -inf for silence
-        let rms_db = if rms > 0.0 {
-            20.0 * (rms / i16::MAX as f64).log10()
-        } else {
-            -96.0 // Effective silence floor for 16-bit audio
-        };
-        let dc_offset = (sum as f64 / n) / i16::MAX as f64;
-
         StreamEvent::AudioQualityReport {
             source_id: self
                 .source_id
@@ -264,9 +278,9 @@ impl QualityMonitor {
                 .unwrap_or_else(|| SourceId::new("default")),
             position,
             peak_amplitude: peak,
-            rms_db: rms_db as f32,
+            rms_db: calculate_rms_db(sum_squares, samples.len()),
             clipped_samples: clipped,
-            dc_offset: dc_offset as f32,
+            dc_offset: calculate_dc_offset(sum, samples.len()),
             total_clipped_samples: self.total_clipped,
         }
     }
@@ -280,7 +294,7 @@ impl QualityMonitor {
                 .unwrap_or_else(|| SourceId::new("default")),
             position,
             peak_amplitude: 0,
-            rms_db: -96.0,
+            rms_db: SILENCE_FLOOR_DB,
             clipped_samples: 0,
             dc_offset: 0.0,
             total_clipped_samples: self.total_clipped,
@@ -428,7 +442,6 @@ impl CaptureBridge {
     /// Processes the next available chunk from the ring buffer.
     fn process_next_chunk(&mut self, output_timestamp: &mut Duration) -> Option<AudioChunk> {
         if !self.audio_buffer.has_chunk() {
-            // Even if no chunk is ready, check for silence timeout
             self.check_flow_timeout();
             return None;
         }
@@ -436,29 +449,27 @@ impl CaptureBridge {
         let device_chunk = self.audio_buffer.try_read_chunk()?;
         let chunk = self.convert_chunk(&device_chunk, output_timestamp);
 
-        // Check if this chunk has non-zero audio (not silence)
+        self.monitor_chunk(&chunk);
+        self.update_session_stats(&chunk);
+
+        Some(chunk)
+    }
+
+    /// Monitors a chunk for audio flow, gaps, and quality issues.
+    fn monitor_chunk(&mut self, chunk: &AudioChunk) {
         let has_audio = chunk.samples.iter().any(|&s| s != 0);
         if let Some(event) = self.flow_monitor.update(has_audio) {
             self.emit_event(event);
         }
 
-        // Scan for suspicious zero gaps (device contention, USB issues)
         let gap_events = self
             .gap_monitor
             .scan_chunk(&chunk.samples, self.samples_processed);
         for event in gap_events {
-            // Update session stats
-            let (gaps, gap_ms) = self.gap_monitor.stats();
-            self.state
-                .audio_gaps_detected
-                .store(gaps as u64, Ordering::SeqCst);
-            self.state
-                .total_gap_duration_ms
-                .store(gap_ms, Ordering::SeqCst);
+            self.update_gap_stats();
             self.emit_event(event);
         }
 
-        // Emit quality metrics for this chunk
         let quality_event = self
             .quality_monitor
             .analyze_chunk(&chunk.samples, chunk.timestamp);
@@ -468,9 +479,15 @@ impl CaptureBridge {
         self.emit_event(quality_event);
 
         self.samples_processed += chunk.samples.len() as u64;
+    }
 
-        // Log chunk production periodically
-        let chunks = self.state.chunks_processed.load(Ordering::SeqCst);
+    /// Updates session statistics and logs progress periodically.
+    fn update_session_stats(&self, chunk: &AudioChunk) {
+        self.state
+            .samples_captured
+            .fetch_add(chunk.samples.len() as u64, Ordering::SeqCst);
+        let chunks = self.state.chunks_processed.fetch_add(1, Ordering::SeqCst);
+
         if chunks % 50 == 0 {
             tracing::debug!(
                 "CaptureBridge {:?}: produced chunk #{}, {} samples, ts={:?}",
@@ -480,14 +497,6 @@ impl CaptureBridge {
                 chunk.timestamp
             );
         }
-
-        // Update statistics
-        self.state
-            .samples_captured
-            .fetch_add(chunk.samples.len() as u64, Ordering::SeqCst);
-        self.state.chunks_processed.fetch_add(1, Ordering::SeqCst);
-
-        Some(chunk)
     }
 
     /// Checks for silence timeout when no chunks are available.
@@ -503,6 +512,17 @@ impl CaptureBridge {
         if let Some(ref callback) = self.event_callback {
             callback(event);
         }
+    }
+
+    /// Updates session state with current gap statistics.
+    fn update_gap_stats(&self) {
+        let (gaps, gap_ms) = self.gap_monitor.stats();
+        self.state
+            .audio_gaps_detected
+            .store(gaps as u64, Ordering::SeqCst);
+        self.state
+            .total_gap_duration_ms
+            .store(gap_ms, Ordering::SeqCst);
     }
 
     /// Converts a device-format chunk to target format.
@@ -544,13 +564,7 @@ impl CaptureBridge {
                 .gap_monitor
                 .scan_chunk(&chunk.samples, self.samples_processed);
             for event in gap_events {
-                let (gaps, gap_ms) = self.gap_monitor.stats();
-                self.state
-                    .audio_gaps_detected
-                    .store(gaps as u64, Ordering::SeqCst);
-                self.state
-                    .total_gap_duration_ms
-                    .store(gap_ms, Ordering::SeqCst);
+                self.update_gap_stats();
                 self.emit_event(event);
             }
             self.samples_processed += chunk.samples.len() as u64;
@@ -561,13 +575,7 @@ impl CaptureBridge {
 
         // Flush any pending gap at end of stream
         if let Some(event) = self.gap_monitor.flush() {
-            let (gaps, gap_ms) = self.gap_monitor.stats();
-            self.state
-                .audio_gaps_detected
-                .store(gaps as u64, Ordering::SeqCst);
-            self.state
-                .total_gap_duration_ms
-                .store(gap_ms, Ordering::SeqCst);
+            self.update_gap_stats();
             self.emit_event(event);
         }
     }

@@ -5,14 +5,8 @@ use cpal::{Device, SampleFormat, Stream, StreamConfig as CpalStreamConfig};
 use ringbuf::traits::{Producer, Split};
 use ringbuf::HeapRb;
 
+use crate::format::f32_to_i16;
 use crate::StreamAudioError;
-
-/// Symmetric i16 max for audio conversion (avoids asymmetric clipping).
-const I16_MAX_SYMMETRIC: f32 = i16::MAX as f32;
-/// Minimum i16 as f32 for clamping.
-const I16_MIN_F32: f32 = i16::MIN as f32;
-/// Maximum i16 as f32 for clamping.
-const I16_MAX_F32: f32 = i16::MAX as f32;
 
 /// Configuration for audio capture.
 #[derive(Debug, Clone)]
@@ -195,11 +189,8 @@ impl AudioDevice {
             .build_input_stream(
                 config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    // Inline conversion to avoid function call overhead in audio callback
                     for &sample in data {
-                        let converted =
-                            (sample * I16_MAX_SYMMETRIC).clamp(I16_MIN_F32, I16_MAX_F32) as i16;
-                        let _ = producer.try_push(converted);
+                        let _ = producer.try_push(f32_to_i16(sample));
                     }
                 },
                 |err| {

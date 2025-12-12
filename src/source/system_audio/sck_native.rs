@@ -20,16 +20,12 @@ use ringbuf::traits::{Producer, Split};
 use ringbuf::{HeapCons, HeapProd, HeapRb};
 
 use super::{SystemAudioBackend, SystemAudioEvent};
+use crate::format::f32_to_i16;
 use crate::source::CaptureStream;
 use crate::StreamAudioError;
 
 /// Ring buffer duration in seconds
 const BUFFER_DURATION_SECS: usize = 30;
-
-// Symmetric i16 max for audio conversion
-const I16_MAX_SYMMETRIC: f32 = i16::MAX as f32;
-const I16_MIN_F32: f32 = i16::MIN as f32;
-const I16_MAX_F32: f32 = i16::MAX as f32;
 
 // MARK: - FFI Types
 
@@ -157,10 +153,7 @@ unsafe extern "C" fn audio_callback(
     // Verdict: simplicity and predictability outweigh micro-optimization here.
     let mut overflow = 0u64;
     for &sample_f32 in sample_slice {
-        // Convert f32 [-1.0, 1.0] to i16
-        let sample_i16 = (sample_f32 * I16_MAX_SYMMETRIC).clamp(I16_MIN_F32, I16_MAX_F32) as i16;
-
-        if producer.try_push(sample_i16).is_err() {
+        if producer.try_push(f32_to_i16(sample_f32)).is_err() {
             overflow += 1;
         }
     }
