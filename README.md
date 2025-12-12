@@ -1,8 +1,8 @@
 # stream-audio
 
-> **Note:** This crate is under active development. The API may change before 1.0.
+Capture audio from microphones and system speakers in Rust. Route to files, channels, or custom sinks. Handles the hard stuff (non-blocking capture, format conversion, multi-source routing) so you can focus on what to do with the audio.
 
-Real-time audio capture with multi-sink architecture.
+> **Note:** This crate is under active development. The API may change before 1.0.
 
 [![CI](https://github.com/lotl-co/stream-audio/actions/workflows/ci.yml/badge.svg)](https://github.com/lotl-co/stream-audio/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/stream-audio.svg)](https://crates.io/crates/stream-audio)
@@ -17,7 +17,7 @@ Real-time audio capture with multi-sink architecture.
 
 - **System audio capture**: cpal doesn't capture loopback/system audio. On macOS, stream-audio uses ScreenCaptureKit to capture what's playing through speakers—no virtual audio device needed.
 
-- **Multi-source routing**: Capture mic + system audio simultaneously, route to separate files, merge together, or broadcast to multiple sinks—all declaratively configured.
+- **Multi-source routing**: Capture mic + system audio simultaneously, route to separate files, or broadcast to multiple sinks—all declaratively configured.
 
 - **Format conversion**: Automatic resampling, channel conversion (stereo→mono), and sample format conversion with an optimized pipeline.
 

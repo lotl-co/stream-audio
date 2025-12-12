@@ -111,6 +111,22 @@ fn generate_source_id(source: &SourceOption, index: usize) -> String {
     }
 }
 
+/// Sanitizes a device name for use as a filename.
+/// "MacBook Pro Microphone" → "macbook_pro_microphone"
+fn sanitize_filename(name: &str) -> String {
+    let sanitized: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    // Remove leading/trailing underscores and collapse multiple underscores
+    sanitized
+        .split('_')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
@@ -152,13 +168,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let source = &sources[selected_indices[idx]];
         let filename = if source_ids.len() == 1 {
             output_file.clone()
-        } else if source.is_system_audio {
-            "recording_system.wav".to_string()
         } else {
-            format!("recording_{}.wav", source_id)
+            format!("{}.wav", sanitize_filename(&source.name))
         };
         builder = builder.add_sink_from(FileSink::wav(&filename), source_id.as_str());
-        println!("  - {} (from {})", filename, source_id);
+        println!("  - {} (from {})", filename, source.name);
     }
 
     // Add event handler
