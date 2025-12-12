@@ -97,7 +97,8 @@ extern "C" {
 
 /// Context passed to the Swift callback
 struct CallbackContext {
-    producer: std::sync::Mutex<HeapProd<i16>>,
+    /// Producer is None until start_capture() is called
+    producer: std::sync::Mutex<Option<HeapProd<i16>>>,
     overflow_count: std::sync::atomic::AtomicU64,
     is_active: AtomicBool,
 }
@@ -120,8 +121,11 @@ unsafe extern "C" fn audio_callback(
         return;
     }
 
-    let Ok(mut producer) = ctx.producer.lock() else {
+    let Ok(mut guard) = ctx.producer.lock() else {
         return;
+    };
+    let Some(ref mut producer) = *guard else {
+        return; // Not yet initialized (start_capture not called)
     };
 
     let total_samples = frame_count * channels as usize;
@@ -162,15 +166,10 @@ impl SCKNativeBackend {
     /// - macOS version is below 13.0
     /// - Session creation fails
     pub fn new() -> Result<Self, StreamAudioError> {
-        // Create ring buffer
-        let ring_buffer = HeapRb::<i16>::new(BUFFER_CAPACITY);
-        let (producer, _consumer) = ring_buffer.split();
-
-        // Note: consumer is returned separately in start_capture()
-        // For now we just need to verify session creation works
-
+        // Ring buffer is created in start_capture() to avoid allocating 2.7MB
+        // that would be immediately discarded
         let context = Arc::new(CallbackContext {
-            producer: std::sync::Mutex::new(producer),
+            producer: std::sync::Mutex::new(None),
             overflow_count: std::sync::atomic::AtomicU64::new(0),
             is_active: AtomicBool::new(false),
         });
@@ -228,7 +227,7 @@ impl SystemAudioBackend for SCKNativeBackend {
         let ring_buffer = HeapRb::<i16>::new(BUFFER_CAPACITY);
         let (producer, consumer) = ring_buffer.split();
 
-        // Update the context with the new producer
+        // Set the producer in the context
         {
             let Ok(mut guard) = self.context.producer.lock() else {
                 return Err(StreamAudioError::SystemAudioRuntimeFailure {
@@ -236,7 +235,7 @@ impl SystemAudioBackend for SCKNativeBackend {
                     cause: "mutex poisoned".into(),
                 });
             };
-            *guard = producer;
+            *guard = Some(producer);
         }
 
         self.context.is_active.store(true, Ordering::SeqCst);
