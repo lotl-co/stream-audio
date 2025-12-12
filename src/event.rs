@@ -45,6 +45,9 @@ use crate::source::SourceId;
 ///         StreamEvent::AudioFlowResumed { source_id } => {
 ///             eprintln!("Audio resumed for {}", source_id);
 ///         }
+///         StreamEvent::AudioGapDetected { source_id, gap_duration_ms, cumulative_gaps, .. } => {
+///             eprintln!("Audio gap detected for {}: {}ms (total gaps: {})", source_id, gap_duration_ms, cumulative_gaps);
+///         }
 ///     }
 /// }
 /// ```
@@ -137,6 +140,31 @@ pub enum StreamEvent {
     AudioFlowResumed {
         /// Source that resumed producing audio.
         source_id: SourceId,
+    },
+
+    /// Detected a suspicious gap of zero samples in the audio stream.
+    ///
+    /// This indicates the audio device delivered silence instead of real audio,
+    /// which typically happens when:
+    /// - Another application is competing for the same audio device
+    /// - USB bandwidth issues or device buffer underruns
+    /// - Driver or OS audio subsystem problems
+    ///
+    /// The capture continues running - this is informational for quality monitoring.
+    /// Downstream applications can decide how to respond (warn user, abort, etc.).
+    AudioGapDetected {
+        /// Source where the gap was detected.
+        source_id: SourceId,
+        /// Duration of this gap in milliseconds.
+        gap_duration_ms: u64,
+        /// Number of zero samples in this gap (for pattern analysis).
+        gap_samples: u32,
+        /// Position in the recording where the gap occurred.
+        position: std::time::Duration,
+        /// Total number of gaps detected so far in this session.
+        cumulative_gaps: u32,
+        /// Total gap duration in milliseconds across all gaps.
+        cumulative_gap_ms: u64,
     },
 }
 

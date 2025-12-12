@@ -24,6 +24,9 @@ use crate::{AudioChunk, StreamEvent};
 /// If no non-zero samples are received for this duration, emit `AudioFlowStopped`.
 const SILENCE_THRESHOLD: Duration = Duration::from_millis(500);
 
+/// Minimum gap duration to report as suspicious (50ms catches audible gaps).
+const GAP_THRESHOLD_MS: u64 = 50;
+
 /// Monitors audio flow and detects when audio stops/resumes.
 struct FlowMonitor {
     /// Time when we last received non-zero audio samples.
@@ -77,6 +80,124 @@ impl FlowMonitor {
     }
 }
 
+/// Monitors for suspicious zero-sample gaps that indicate device issues.
+///
+/// Unlike `FlowMonitor` which detects when audio stops completely, `GapMonitor`
+/// detects shorter gaps (50ms+) within the audio stream that indicate:
+/// - Device contention (multiple apps using same audio device)
+/// - USB bandwidth issues or buffer underruns
+/// - Driver or OS audio subsystem problems
+struct GapMonitor {
+    /// Source ID for event emission.
+    source_id: Option<SourceId>,
+    /// Sample rate for duration calculations.
+    sample_rate: u32,
+    /// Threshold in samples (calculated from `GAP_THRESHOLD_MS` and `sample_rate`).
+    threshold_samples: u32,
+    /// Consecutive zero samples from previous chunk (for cross-chunk gaps).
+    pending_zeros: u32,
+    /// Position in samples where the pending gap started.
+    pending_gap_start_samples: u64,
+    /// Cumulative count of gaps detected.
+    cumulative_gaps: u32,
+    /// Cumulative gap duration in milliseconds.
+    cumulative_gap_ms: u64,
+}
+
+impl GapMonitor {
+    fn new(source_id: Option<SourceId>, sample_rate: u32) -> Self {
+        let threshold_samples = (sample_rate as u64 * GAP_THRESHOLD_MS / 1000) as u32;
+        Self {
+            source_id,
+            sample_rate,
+            threshold_samples,
+            pending_zeros: 0,
+            pending_gap_start_samples: 0,
+            cumulative_gaps: 0,
+            cumulative_gap_ms: 0,
+        }
+    }
+
+    /// Scans a chunk for zero gaps and returns events for any gaps found.
+    ///
+    /// Handles gaps that span chunk boundaries by tracking pending zeros.
+    fn scan_chunk(&mut self, samples: &[i16], chunk_start_samples: u64) -> Vec<StreamEvent> {
+        let mut events = Vec::new();
+        let mut consecutive_zeros: u32 = self.pending_zeros;
+        let mut gap_start_samples = if self.pending_zeros > 0 {
+            self.pending_gap_start_samples
+        } else {
+            chunk_start_samples
+        };
+
+        for (i, &sample) in samples.iter().enumerate() {
+            if sample == 0 {
+                if consecutive_zeros == 0 {
+                    gap_start_samples = chunk_start_samples + i as u64;
+                }
+                consecutive_zeros += 1;
+            } else {
+                // Non-zero sample: check if we had a gap
+                if consecutive_zeros >= self.threshold_samples {
+                    events.push(self.emit_gap_event(consecutive_zeros, gap_start_samples));
+                }
+                consecutive_zeros = 0;
+            }
+        }
+
+        // Track any trailing zeros for the next chunk
+        self.pending_zeros = consecutive_zeros;
+        self.pending_gap_start_samples = gap_start_samples;
+
+        events
+    }
+
+    /// Flushes any pending gap at end of stream.
+    fn flush(&mut self) -> Option<StreamEvent> {
+        if self.pending_zeros >= self.threshold_samples {
+            let event = self.emit_gap_event(self.pending_zeros, self.pending_gap_start_samples);
+            self.pending_zeros = 0;
+            return Some(event);
+        }
+        None
+    }
+
+    fn emit_gap_event(&mut self, gap_samples: u32, gap_start_samples: u64) -> StreamEvent {
+        let gap_duration_ms = (gap_samples as u64 * 1000) / self.sample_rate as u64;
+
+        self.cumulative_gaps += 1;
+        self.cumulative_gap_ms += gap_duration_ms;
+
+        let position = Duration::from_secs_f64(gap_start_samples as f64 / self.sample_rate as f64);
+
+        tracing::warn!(
+            source = ?self.source_id,
+            gap_ms = gap_duration_ms,
+            gap_samples,
+            position_s = position.as_secs_f64(),
+            total_gaps = self.cumulative_gaps,
+            "Audio gap detected - possible device contention or USB issue"
+        );
+
+        StreamEvent::AudioGapDetected {
+            source_id: self
+                .source_id
+                .clone()
+                .unwrap_or_else(|| SourceId::new("default")),
+            gap_duration_ms,
+            gap_samples,
+            position,
+            cumulative_gaps: self.cumulative_gaps,
+            cumulative_gap_ms: self.cumulative_gap_ms,
+        }
+    }
+
+    /// Returns the current cumulative stats.
+    fn stats(&self) -> (u32, u64) {
+        (self.cumulative_gaps, self.cumulative_gap_ms)
+    }
+}
+
 /// Configuration for the capture bridge task.
 #[derive(Debug, Clone)]
 pub struct CaptureConfig {
@@ -116,10 +237,14 @@ pub struct CaptureBridge {
     source_id: Option<SourceId>,
     /// Monitors audio flow for stop/resume detection.
     flow_monitor: FlowMonitor,
+    /// Monitors for suspicious zero-sample gaps.
+    gap_monitor: GapMonitor,
     /// Optional callback for emitting flow events.
     event_callback: Option<EventCallback>,
     /// Session start time for synchronized timestamps across sources.
     session_start: Instant,
+    /// Running total of samples processed (for gap position tracking).
+    samples_processed: u64,
 }
 
 impl CaptureBridge {
@@ -168,8 +293,10 @@ impl CaptureBridge {
             poll_interval,
             source_id: config.source_id.clone(),
             flow_monitor: FlowMonitor::new(config.source_id.clone()),
+            gap_monitor: GapMonitor::new(config.source_id.clone(), config.target_sample_rate),
             event_callback,
             session_start: config.session_start,
+            samples_processed: 0,
         }
     }
 
@@ -216,6 +343,23 @@ impl CaptureBridge {
         if let Some(event) = self.flow_monitor.update(has_audio) {
             self.emit_event(event);
         }
+
+        // Scan for suspicious zero gaps (device contention, USB issues)
+        let gap_events = self
+            .gap_monitor
+            .scan_chunk(&chunk.samples, self.samples_processed);
+        for event in gap_events {
+            // Update session stats
+            let (gaps, gap_ms) = self.gap_monitor.stats();
+            self.state
+                .audio_gaps_detected
+                .store(gaps as u64, Ordering::SeqCst);
+            self.state
+                .total_gap_duration_ms
+                .store(gap_ms, Ordering::SeqCst);
+            self.emit_event(event);
+        }
+        self.samples_processed += chunk.samples.len() as u64;
 
         // Log chunk production periodically
         let chunks = self.state.chunks_processed.load(Ordering::SeqCst);
@@ -286,8 +430,37 @@ impl CaptureBridge {
     async fn drain_remaining(&mut self, output_timestamp: &mut Duration) {
         for device_chunk in self.audio_buffer.drain() {
             let chunk = self.convert_chunk(&device_chunk, output_timestamp);
+
+            // Scan remaining chunks for gaps
+            let gap_events = self
+                .gap_monitor
+                .scan_chunk(&chunk.samples, self.samples_processed);
+            for event in gap_events {
+                let (gaps, gap_ms) = self.gap_monitor.stats();
+                self.state
+                    .audio_gaps_detected
+                    .store(gaps as u64, Ordering::SeqCst);
+                self.state
+                    .total_gap_duration_ms
+                    .store(gap_ms, Ordering::SeqCst);
+                self.emit_event(event);
+            }
+            self.samples_processed += chunk.samples.len() as u64;
+
             // Best effort - don't block on send during shutdown
             let _ = self.chunk_tx.send(chunk).await;
+        }
+
+        // Flush any pending gap at end of stream
+        if let Some(event) = self.gap_monitor.flush() {
+            let (gaps, gap_ms) = self.gap_monitor.stats();
+            self.state
+                .audio_gaps_detected
+                .store(gaps as u64, Ordering::SeqCst);
+            self.state
+                .total_gap_duration_ms
+                .store(gap_ms, Ordering::SeqCst);
+            self.emit_event(event);
         }
     }
 }

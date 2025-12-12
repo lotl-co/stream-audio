@@ -25,6 +25,10 @@ pub struct SessionStats {
     pub samples_captured: u64,
     /// Number of buffer overflows.
     pub buffer_overflows: u64,
+    /// Number of audio gaps detected (suspicious zero-sample runs).
+    pub audio_gaps_detected: u64,
+    /// Total duration of detected gaps in milliseconds.
+    pub total_gap_duration_ms: u64,
 }
 
 /// Internal state shared between Session and background tasks.
@@ -33,6 +37,8 @@ pub(crate) struct SessionState {
     pub chunks_processed: AtomicU64,
     pub samples_captured: AtomicU64,
     pub buffer_overflows: AtomicU64,
+    pub audio_gaps_detected: AtomicU64,
+    pub total_gap_duration_ms: AtomicU64,
 }
 
 impl SessionState {
@@ -42,6 +48,8 @@ impl SessionState {
             chunks_processed: AtomicU64::new(0),
             samples_captured: AtomicU64::new(0),
             buffer_overflows: AtomicU64::new(0),
+            audio_gaps_detected: AtomicU64::new(0),
+            total_gap_duration_ms: AtomicU64::new(0),
         }
     }
 }
@@ -125,6 +133,8 @@ impl Session {
             chunks_processed: self.state.chunks_processed.load(Ordering::SeqCst),
             samples_captured: self.state.samples_captured.load(Ordering::SeqCst),
             buffer_overflows: self.state.buffer_overflows.load(Ordering::SeqCst),
+            audio_gaps_detected: self.state.audio_gaps_detected.load(Ordering::SeqCst),
+            total_gap_duration_ms: self.state.total_gap_duration_ms.load(Ordering::SeqCst),
         }
     }
 
