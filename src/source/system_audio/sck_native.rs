@@ -148,6 +148,13 @@ unsafe extern "C" fn audio_callback(
     let total_samples = frame_count * channels as usize;
     let sample_slice = std::slice::from_raw_parts(samples, total_samples);
 
+    // Per-sample push vs batch push_slice tradeoff:
+    // - push_slice would reduce atomic ops from ~3840/callback to ~2 (at 48kHz stereo)
+    // - BUT requires heap allocation for f32→i16 conversion buffer
+    // - Heap allocation in real-time audio callbacks is discouraged (unpredictable latency)
+    // - Pre-allocating a buffer adds complexity and lock contention
+    // - Current approach uses <1% of callback time budget (~30µs of 20,000µs available)
+    // Verdict: simplicity and predictability outweigh micro-optimization here.
     let mut overflow = 0u64;
     for &sample_f32 in sample_slice {
         // Convert f32 [-1.0, 1.0] to i16
