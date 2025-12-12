@@ -369,7 +369,6 @@ impl StreamAudioBuilder {
         #[cfg(all(target_os = "macos", feature = "sck-native"))]
         let initial_output_config = Self::query_output_device_config();
 
-        // Start regular sources first (mic, named devices, etc.)
         for (source_id, source) in &regular_sources {
             self.start_single_source(
                 source_id,
@@ -386,7 +385,6 @@ impl StreamAudioBuilder {
         #[cfg(all(target_os = "macos", feature = "sck-native"))]
         let post_mic_output_config = Self::query_output_device_config();
 
-        // Start system audio sources last (they'll use the current config)
         for (source_id, source) in &system_audio_sources {
             // Emit config change warning if Bluetooth profile switched
             #[cfg(all(target_os = "macos", feature = "sck-native"))]
@@ -487,7 +485,6 @@ impl StreamAudioBuilder {
             self.event_callback.clone(),
         );
 
-        // Emit SourceStarted event
         if let Some(ref callback) = self.event_callback {
             callback(StreamEvent::SourceStarted {
                 source_id: source_id.clone(),

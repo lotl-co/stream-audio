@@ -26,7 +26,6 @@ struct SourceOption {
 fn list_available_sources() -> Vec<SourceOption> {
     let mut sources = Vec::new();
 
-    // Add microphone devices
     if let Ok(devices) = stream_audio::list_input_devices() {
         for device in devices {
             sources.push(SourceOption {
@@ -37,7 +36,6 @@ fn list_available_sources() -> Vec<SourceOption> {
         }
     }
 
-    // Add system audio if available
     #[cfg(all(target_os = "macos", feature = "sck-native"))]
     {
         sources.push(SourceOption {
@@ -148,7 +146,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let output_file = prompt_output_filename();
 
-    // Build the session
     let mut builder = StreamAudio::builder().format(FormatPreset::Transcription);
 
     let mut source_ids = Vec::new();
@@ -162,7 +159,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         source_ids.push(source_id);
     }
 
-    // Add file sinks for each source
     println!("\nOutput files:");
     for (idx, source_id) in source_ids.iter().enumerate() {
         let source = &sources[selected_indices[idx]];
@@ -175,7 +171,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  - {} (from {})", filename, source.name);
     }
 
-    // Add event handler
     builder = builder.on_event(|event| match event {
         stream_audio::StreamEvent::SourceStarted { source_id } => {
             println!("[Event] Source started: {}", source_id);
@@ -195,7 +190,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let session = builder.start().await?;
 
-    // Wait for Ctrl-C
     tokio::signal::ctrl_c().await?;
 
     println!();

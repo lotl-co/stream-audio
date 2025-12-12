@@ -9,7 +9,6 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    // Only build Swift library on macOS with sck-native feature
     #[cfg(target_os = "macos")]
     if env::var("CARGO_FEATURE_SCK_NATIVE").is_ok() {
         build_swift_library();
@@ -27,12 +26,10 @@ fn build_swift_library() {
     let swift_dir = manifest_path.join("swift");
     let lib_dir = manifest_path.join("target/swift");
 
-    // Rebuild if Swift sources change
     println!("cargo:rerun-if-changed=swift/Sources/");
     println!("cargo:rerun-if-changed=swift/Package.swift");
     println!("cargo:rerun-if-changed=swift/build.sh");
 
-    // Build Swift library
     let status = Command::new("bash")
         .arg("build.sh")
         .current_dir(&swift_dir)
@@ -44,7 +41,6 @@ fn build_swift_library() {
         "Swift build failed. Check swift/build.sh output."
     );
 
-    // Verify the library was built
     let dylib_path = lib_dir.join("libsck_audio.dylib");
     assert!(
         dylib_path.exists(),
@@ -52,7 +48,6 @@ fn build_swift_library() {
         dylib_path.display()
     );
 
-    // Link the dynamic library
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=dylib=sck_audio");
 
@@ -60,7 +55,6 @@ fn build_swift_library() {
     // This is a known Cargo limitation - see rust-lang/cargo#5077
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir.display());
 
-    // Link required Apple frameworks
     println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
     println!("cargo:rustc-link-lib=framework=CoreMedia");
     println!("cargo:rustc-link-lib=framework=CoreGraphics");
