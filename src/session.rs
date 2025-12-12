@@ -29,6 +29,8 @@ pub struct SessionStats {
     pub audio_gaps_detected: u64,
     /// Total duration of detected gaps in milliseconds.
     pub total_gap_duration_ms: u64,
+    /// Total samples that hit max amplitude (clipping indicator).
+    pub clipped_samples: u64,
 }
 
 /// Internal state shared between Session and background tasks.
@@ -39,6 +41,7 @@ pub(crate) struct SessionState {
     pub buffer_overflows: AtomicU64,
     pub audio_gaps_detected: AtomicU64,
     pub total_gap_duration_ms: AtomicU64,
+    pub clipped_samples: AtomicU64,
 }
 
 impl SessionState {
@@ -50,6 +53,7 @@ impl SessionState {
             buffer_overflows: AtomicU64::new(0),
             audio_gaps_detected: AtomicU64::new(0),
             total_gap_duration_ms: AtomicU64::new(0),
+            clipped_samples: AtomicU64::new(0),
         }
     }
 }
@@ -135,6 +139,7 @@ impl Session {
             buffer_overflows: self.state.buffer_overflows.load(Ordering::SeqCst),
             audio_gaps_detected: self.state.audio_gaps_detected.load(Ordering::SeqCst),
             total_gap_duration_ms: self.state.total_gap_duration_ms.load(Ordering::SeqCst),
+            clipped_samples: self.state.clipped_samples.load(Ordering::SeqCst),
         }
     }
 

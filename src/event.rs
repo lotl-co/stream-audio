@@ -48,6 +48,14 @@ use crate::source::SourceId;
 ///         StreamEvent::AudioGapDetected { source_id, gap_duration_ms, cumulative_gaps, .. } => {
 ///             eprintln!("Audio gap detected for {}: {}ms (total gaps: {})", source_id, gap_duration_ms, cumulative_gaps);
 ///         }
+///         StreamEvent::AudioQualityReport { source_id, clipped_samples, rms_db, .. } => {
+///             if clipped_samples > 0 {
+///                 eprintln!("Clipping detected on {}: {} samples", source_id, clipped_samples);
+///             }
+///             if rms_db < -50.0 {
+///                 eprintln!("Low audio level on {}: {:.1} dB", source_id, rms_db);
+///             }
+///         }
 ///     }
 /// }
 /// ```
@@ -165,6 +173,33 @@ pub enum StreamEvent {
         cumulative_gaps: u32,
         /// Total gap duration in milliseconds across all gaps.
         cumulative_gap_ms: u64,
+    },
+
+    /// Per-chunk audio quality metrics for monitoring signal health.
+    ///
+    /// Emitted for every audio chunk (~100ms) with real-time quality indicators.
+    /// Downstream applications can use these to:
+    /// - Warn users about clipping (samples hitting max amplitude)
+    /// - Suggest gain adjustments if signal is too quiet
+    /// - Detect hardware issues via DC offset
+    /// - Track quality trends over the recording session
+    ///
+    /// The capture continues running - this is purely informational.
+    AudioQualityReport {
+        /// Source this report is for.
+        source_id: SourceId,
+        /// Position in the recording.
+        position: std::time::Duration,
+        /// Peak sample amplitude this chunk (0-32767 for i16).
+        peak_amplitude: i16,
+        /// RMS level in dB (typically -60 to 0, where 0 is max).
+        rms_db: f32,
+        /// Number of samples at ±32767 this chunk (clipping indicator).
+        clipped_samples: u32,
+        /// DC offset as fraction of max (-1.0 to 1.0, should be near 0).
+        dc_offset: f32,
+        /// Cumulative clipped samples this session.
+        total_clipped_samples: u64,
     },
 }
 

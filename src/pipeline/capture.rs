@@ -198,6 +198,101 @@ impl GapMonitor {
     }
 }
 
+/// Monitors audio quality metrics per-chunk (peak, RMS, clipping, DC offset).
+///
+/// Unlike `GapMonitor` which detects specific anomalies, `QualityMonitor` provides
+/// continuous signal health metrics that downstream applications can use to:
+/// - Warn about clipping (samples at max amplitude)
+/// - Suggest gain adjustments
+/// - Detect hardware issues via DC offset
+struct QualityMonitor {
+    /// Source ID for event emission.
+    source_id: Option<SourceId>,
+    /// Cumulative clipped samples across all chunks.
+    total_clipped: u64,
+}
+
+impl QualityMonitor {
+    fn new(source_id: Option<SourceId>) -> Self {
+        Self {
+            source_id,
+            total_clipped: 0,
+        }
+    }
+
+    /// Analyzes a chunk and returns a quality report event.
+    ///
+    /// Computes: peak amplitude, RMS level (dB), clipping count, DC offset.
+    fn analyze_chunk(&mut self, samples: &[i16], position: Duration) -> StreamEvent {
+        if samples.is_empty() {
+            return self.empty_report(position);
+        }
+
+        let mut peak: i16 = 0;
+        let mut sum_squares: f64 = 0.0;
+        let mut sum: i64 = 0;
+        let mut clipped: u32 = 0;
+
+        for &s in samples {
+            let abs = s.saturating_abs();
+            if abs > peak {
+                peak = abs;
+            }
+            sum_squares += (s as f64).powi(2);
+            sum += s as i64;
+            if s == i16::MAX || s == i16::MIN {
+                clipped += 1;
+            }
+        }
+
+        self.total_clipped += clipped as u64;
+
+        let n = samples.len() as f64;
+        let rms = (sum_squares / n).sqrt();
+        // Convert to dB relative to i16::MAX, clamping to avoid -inf for silence
+        let rms_db = if rms > 0.0 {
+            20.0 * (rms / i16::MAX as f64).log10()
+        } else {
+            -96.0 // Effective silence floor for 16-bit audio
+        };
+        let dc_offset = (sum as f64 / n) / i16::MAX as f64;
+
+        StreamEvent::AudioQualityReport {
+            source_id: self
+                .source_id
+                .clone()
+                .unwrap_or_else(|| SourceId::new("default")),
+            position,
+            peak_amplitude: peak,
+            rms_db: rms_db as f32,
+            clipped_samples: clipped,
+            dc_offset: dc_offset as f32,
+            total_clipped_samples: self.total_clipped,
+        }
+    }
+
+    /// Returns a report for empty chunks (edge case).
+    fn empty_report(&self, position: Duration) -> StreamEvent {
+        StreamEvent::AudioQualityReport {
+            source_id: self
+                .source_id
+                .clone()
+                .unwrap_or_else(|| SourceId::new("default")),
+            position,
+            peak_amplitude: 0,
+            rms_db: -96.0,
+            clipped_samples: 0,
+            dc_offset: 0.0,
+            total_clipped_samples: self.total_clipped,
+        }
+    }
+
+    /// Returns cumulative clipped sample count.
+    fn total_clipped(&self) -> u64 {
+        self.total_clipped
+    }
+}
+
 /// Configuration for the capture bridge task.
 #[derive(Debug, Clone)]
 pub struct CaptureConfig {
@@ -239,6 +334,8 @@ pub struct CaptureBridge {
     flow_monitor: FlowMonitor,
     /// Monitors for suspicious zero-sample gaps.
     gap_monitor: GapMonitor,
+    /// Monitors audio quality metrics (peak, RMS, clipping, DC offset).
+    quality_monitor: QualityMonitor,
     /// Optional callback for emitting flow events.
     event_callback: Option<EventCallback>,
     /// Session start time for synchronized timestamps across sources.
@@ -294,6 +391,7 @@ impl CaptureBridge {
             source_id: config.source_id.clone(),
             flow_monitor: FlowMonitor::new(config.source_id.clone()),
             gap_monitor: GapMonitor::new(config.source_id.clone(), config.target_sample_rate),
+            quality_monitor: QualityMonitor::new(config.source_id.clone()),
             event_callback,
             session_start: config.session_start,
             samples_processed: 0,
@@ -359,6 +457,16 @@ impl CaptureBridge {
                 .store(gap_ms, Ordering::SeqCst);
             self.emit_event(event);
         }
+
+        // Emit quality metrics for this chunk
+        let quality_event = self
+            .quality_monitor
+            .analyze_chunk(&chunk.samples, chunk.timestamp);
+        self.state
+            .clipped_samples
+            .store(self.quality_monitor.total_clipped(), Ordering::SeqCst);
+        self.emit_event(quality_event);
+
         self.samples_processed += chunk.samples.len() as u64;
 
         // Log chunk production periodically
