@@ -47,8 +47,11 @@ final class SCKAudioSession: NSObject, SCStreamOutput, SCStreamDelegate {
         super.init()
     }
 
-    /// Synchronous start - blocks until capture starts or fails
+    /// Synchronous start. Blocks until capture starts or fails.
+    /// - Warning: Do not call from main thread (deadlocks).
     func start() -> SCKError {
+        assert(!Thread.isMainThread, "sck_audio_start: main thread deadlocks")
+
         guard !isRunning else {
             setError("Capture already running")
             return .alreadyRunning
@@ -116,6 +119,7 @@ final class SCKAudioSession: NSObject, SCStreamOutput, SCStreamDelegate {
         return result
     }
 
+    /// Stop capture. Blocks up to 1s. Avoid main thread.
     func stop() {
         // Idempotent - safe to call multiple times
         let wasRunning = isRunning
