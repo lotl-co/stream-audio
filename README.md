@@ -29,10 +29,10 @@ stream-audio handles all of this so you can focus on what to do with the audio, 
 cargo add stream-audio
 ```
 
-For system audio capture (loopback), enable the `system-audio` feature:
+For system audio capture (loopback), enable the `sck-native` feature:
 
 ```bash
-cargo add stream-audio --features system-audio
+cargo add stream-audio --features sck-native
 ```
 
 **MSRV:** Rust 1.75+
@@ -96,12 +96,14 @@ CPAL AUDIO THREAD (high-priority, never blocks)
                           │
                           ▼ (async recv)
 TOKIO RUNTIME
-  └── Router Task → FileSink, ChannelSink, CustomSink...
+  └── Capture Bridge → Router Task → FileSink, ChannelSink, CustomSink...
+      (format conversion)
 ```
 
 Internally, the crate separates real-time capture (CPAL callback thread) from processing (Tokio tasks). The callback
-pushes samples into a lock-free ring buffer; Tokio drains the buffer and delivers audio to one or more sinks. This
-guarantees that audio capture never blocks even under backpressure.
+pushes samples into a lock-free ring buffer; the Capture Bridge drains the buffer, handles format conversion
+(resampling, channel conversion), and forwards chunks to the Router which delivers audio to one or more sinks.
+This guarantees that audio capture never blocks even under backpressure.
 
 **Key invariant:** The CPAL callback never waits. If sinks are slow, the ring buffer absorbs pressure.
 

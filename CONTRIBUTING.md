@@ -59,7 +59,7 @@ Use the domain language consistently:
 | Session | Active recording session |
 
 ### SOLID Principles
-Ò
+
 - **Single Responsibility**: One reason to change per module
 - **Open/Closed**: Extend via traits, not modification
 - **Liskov Substitution**: All Sink implementations are interchangeable
@@ -164,15 +164,11 @@ Test individual components in isolation:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_chunk_duration() {
-        let chunk = AudioChunk {
-            samples: vec![0i16; 1600],
-            sample_rate: 16000,
-            channels: 1,
-            timestamp: Duration::ZERO,
-        };
+        let chunk = AudioChunk::new(vec![0i16; 1600], Duration::ZERO, 16000, 1);
         assert_eq!(chunk.duration(), Duration::from_millis(100));
     }
 }
@@ -207,10 +203,10 @@ For tests requiring real audio hardware:
 
 ```bash
 # Run the simple recording example
-cargo run --example simple_record
+cargo run --example simple
 
 # Test with specific device
-AUDIO_DEVICE="Built-in Microphone" cargo run --example simple_record
+AUDIO_DEVICE="Built-in Microphone" cargo run --example simple
 ```
 
 ### Debugging System Audio (macOS)
@@ -221,10 +217,10 @@ The native ScreenCaptureKit backend (`sck-native` feature) includes debug loggin
 
 ```bash
 # Via environment variable (works in release builds)
-SCK_AUDIO_DEBUG=1 cargo run --example system_audio --features sck-native
+SCK_AUDIO_DEBUG=1 cargo run --example interactive --features sck-native
 
 # Debug builds have logging enabled by default
-cargo run --example system_audio --features sck-native
+cargo run --example interactive --features sck-native
 ```
 
 **What gets logged:**
