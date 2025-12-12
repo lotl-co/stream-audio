@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "SCKAudioCapture",
-    platforms: [.macOS(.v12)],  // ScreenCaptureKit requires macOS 12.3+
+    platforms: [.macOS(.v13)],  // ScreenCaptureKit audio capture requires macOS 13+
     products: [
         .library(
             name: "SCKAudioCapture",
