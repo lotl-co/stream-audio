@@ -152,6 +152,23 @@ final class SCKAudioSession: NSObject, SCStreamOutput, SCStreamDelegate {
 
     var running: Bool { isRunning }
 
+    /// Returns the last error message as a C string pointer for FFI.
+    ///
+    /// # Thread Safety (Why This Is Safe)
+    ///
+    /// The pointer escapes `withUnsafeBufferPointer`, which would normally be unsafe
+    /// if `lastErrorCString` could be mutated while Rust holds the pointer. However,
+    /// the API contract guarantees this can't happen:
+    ///
+    /// 1. **Failure path**: `setError()` is called synchronously within `start()`,
+    ///    BEFORE the semaphore signals. Rust only reads the error AFTER `start()`
+    ///    returns, so the error is fully written before any read.
+    ///
+    /// 2. **Success path**: When `start()` succeeds, Rust never calls
+    ///    `sck_audio_session_error()`. The `didStopWithError` delegate may call
+    ///    `setError()` later, but no one reads it.
+    ///
+    /// Therefore, there's no temporal overlap between writes and reads.
     var lastError: UnsafePointer<CChar>? {
         guard !lastErrorCString.isEmpty else { return nil }
         return lastErrorCString.withUnsafeBufferPointer { $0.baseAddress }
