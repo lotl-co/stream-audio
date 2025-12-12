@@ -129,7 +129,7 @@ mod tests {
         // Need sck-native feature to actually start capture
         #[cfg(all(target_os = "macos", feature = "sck-native"))]
         {
-            let (_stream, mut consumer) = backend.start_capture().unwrap();
+            let (_stream, mut consumer) = Box::new(backend).start_capture().unwrap();
 
             // Verify pre-filled samples
             use ringbuf::traits::Consumer;

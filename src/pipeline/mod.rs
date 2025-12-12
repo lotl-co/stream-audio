@@ -14,7 +14,6 @@
 //! The ring buffer ensures the CPAL callback never blocks.
 
 mod capture;
-mod merger;
 mod ring_buffer;
 mod router;
 mod routing;

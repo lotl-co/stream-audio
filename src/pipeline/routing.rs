@@ -3,10 +3,9 @@
 //! This module defines how audio chunks from sources are routed to sinks.
 //! Sinks can receive audio from:
 //! - A single source (direct routing)
-//! - Multiple sources merged together (merge routing)
 //! - All sources (broadcast routing, default for backward compatibility)
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use crate::source::SourceId;
 use crate::StreamAudioError;
@@ -23,21 +22,9 @@ pub enum SinkRoute {
 
     /// Receive audio from a single source only.
     Single(SourceId),
-
-    /// Receive merged audio from multiple sources.
-    Merged(HashSet<SourceId>),
 }
 
 impl SinkRoute {
-    /// Creates a route for merged sources.
-    pub fn merged<I, S>(sources: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<SourceId>,
-    {
-        Self::Merged(sources.into_iter().map(Into::into).collect())
-    }
-
     /// Creates a route for a single source (test helper).
     #[cfg(test)]
     pub fn single(source_id: impl Into<SourceId>) -> Self {
@@ -50,14 +37,7 @@ impl SinkRoute {
         match self {
             Self::Broadcast => true,
             Self::Single(id) => id == source_id,
-            Self::Merged(ids) => ids.contains(source_id),
         }
-    }
-
-    /// Returns true if this is a merge route (test helper).
-    #[cfg(test)]
-    pub fn is_merged(&self) -> bool {
-        matches!(self, Self::Merged(_))
     }
 }
 
@@ -72,16 +52,6 @@ pub struct RoutingTable {
 
     /// Sink indices that want all sources (broadcast).
     broadcast_sinks: Vec<usize>,
-
-    /// Merge configurations: (source set, sink indices).
-    merge_groups: Vec<MergeGroup>,
-}
-
-/// A group of sources that are merged and sent to specific sinks.
-#[derive(Debug, Clone)]
-pub struct MergeGroup {
-    /// Indices of sinks that want this merged output.
-    pub sink_indices: Vec<usize>,
 }
 
 impl RoutingTable {
@@ -102,8 +72,6 @@ impl RoutingTable {
         let source_ids: HashSet<SourceId> = source_ids.into_iter().collect();
         let mut direct_routes: HashMap<SourceId, Vec<usize>> = HashMap::new();
         let mut broadcast_sinks = Vec::new();
-        // BTreeSet maintains sorted order and implements Hash, avoiding manual sorting
-        let mut merge_map: HashMap<BTreeSet<SourceId>, Vec<usize>> = HashMap::new();
 
         for (sink_idx, route) in routes {
             match route {
@@ -121,31 +89,12 @@ impl RoutingTable {
                         .or_default()
                         .push(sink_idx);
                 }
-                SinkRoute::Merged(sources) => {
-                    // Validate all sources exist
-                    for source_id in sources {
-                        if !source_ids.contains(source_id) {
-                            return Err(StreamAudioError::UnknownSourceInRoute {
-                                source_id: source_id.to_string(),
-                            });
-                        }
-                    }
-                    let key: BTreeSet<SourceId> = sources.iter().cloned().collect();
-                    merge_map.entry(key).or_default().push(sink_idx);
-                }
             }
         }
-
-        // Convert merge_map to merge_groups
-        let merge_groups = merge_map
-            .into_values()
-            .map(|sink_indices| MergeGroup { sink_indices })
-            .collect();
 
         Ok(Self {
             direct_routes,
             broadcast_sinks,
-            merge_groups,
         })
     }
 
@@ -158,16 +107,6 @@ impl RoutingTable {
     pub fn broadcast_sinks(&self) -> &[usize] {
         &self.broadcast_sinks
     }
-
-    /// Returns all merge groups.
-    pub fn merge_groups(&self) -> &[MergeGroup] {
-        &self.merge_groups
-    }
-
-    /// Returns true if there are any merge routes.
-    pub fn has_merge_routes(&self) -> bool {
-        !self.merge_groups.is_empty()
-    }
 }
 
 #[cfg(test)]
@@ -179,7 +118,6 @@ mod tests {
         let route = SinkRoute::Broadcast;
         assert!(route.wants_source(&SourceId::new("mic")));
         assert!(route.wants_source(&SourceId::new("speaker")));
-        assert!(!route.is_merged());
     }
 
     #[test]
@@ -187,16 +125,6 @@ mod tests {
         let route = SinkRoute::single("mic");
         assert!(route.wants_source(&SourceId::new("mic")));
         assert!(!route.wants_source(&SourceId::new("speaker")));
-        assert!(!route.is_merged());
-    }
-
-    #[test]
-    fn test_sink_route_merged() {
-        let route = SinkRoute::merged(["mic", "speaker"]);
-        assert!(route.wants_source(&SourceId::new("mic")));
-        assert!(route.wants_source(&SourceId::new("speaker")));
-        assert!(!route.wants_source(&SourceId::new("other")));
-        assert!(route.is_merged());
     }
 
     #[test]
@@ -223,18 +151,6 @@ mod tests {
         let table = RoutingTable::new(routes.iter().map(|(i, r)| (*i, r)), sources).unwrap();
 
         assert_eq!(table.broadcast_sinks(), &[0, 1]);
-    }
-
-    #[test]
-    fn test_routing_table_merged() {
-        let sources = vec![SourceId::new("mic"), SourceId::new("speaker")];
-        let routes = vec![(0, SinkRoute::merged(["mic", "speaker"]))];
-
-        let table = RoutingTable::new(routes.iter().map(|(i, r)| (*i, r)), sources).unwrap();
-
-        assert!(table.has_merge_routes());
-        assert_eq!(table.merge_groups().len(), 1);
-        assert_eq!(table.merge_groups()[0].sink_indices, vec![0]);
     }
 
     #[test]

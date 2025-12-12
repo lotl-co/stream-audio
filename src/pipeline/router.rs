@@ -1,21 +1,12 @@
 //! Router task that fans out audio to sinks.
 
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 
-use super::merger::TimeWindowMerger;
 use super::routing::{RoutingTable, SinkRoute};
 use crate::sink::Sink;
 use crate::source::SourceId;
 use crate::{AudioChunk, EventCallback, StreamConfig, StreamEvent};
-
-/// Ticks the interval or pends forever if None.
-async fn tick_or_pend(interval: Option<&mut tokio::time::Interval>) -> tokio::time::Instant {
-    match interval {
-        Some(int) => int.tick().await,
-        None => std::future::pending().await,
-    }
-}
 
 /// Command sent to the router task.
 pub enum RouterCommand {
@@ -31,8 +22,6 @@ pub struct Router {
     sinks: Vec<Arc<dyn Sink>>,
     /// Routing table for efficient dispatch (only in multi-source mode).
     routing_table: Option<RoutingTable>,
-    /// Merger for combined sinks (only when merge routes exist).
-    merger: Option<Mutex<TimeWindowMerger>>,
     event_callback: Option<EventCallback>,
     config: StreamConfig,
 }
@@ -44,7 +33,6 @@ impl Router {
         Self {
             sinks,
             routing_table: None,
-            merger: None,
             event_callback: None,
             config,
         }
@@ -58,38 +46,19 @@ impl Router {
     /// * `sink_routes` - Routing configuration for each sink
     /// * `source_ids` - IDs of all audio sources
     /// * `config` - Stream configuration
-    /// * `sample_rate` - Target sample rate for merged audio output
-    /// * `channels` - Target channel count for merged audio output
     pub fn with_routing(
         sinks: Vec<Arc<dyn Sink>>,
         sink_routes: &[SinkRoute],
         source_ids: Vec<SourceId>,
         config: StreamConfig,
-        sample_rate: u32,
-        channels: u16,
     ) -> Result<Self, crate::StreamAudioError> {
         // Build routing table from sink_routes
         let routing_table =
             RoutingTable::new(sink_routes.iter().enumerate(), source_ids.iter().cloned())?;
 
-        // Create merger if there are merge routes
-        let merger = if routing_table.has_merge_routes() {
-            Some(Mutex::new(TimeWindowMerger::with_max_pending(
-                config.merge_window_duration,
-                config.merge_window_timeout,
-                source_ids,
-                sample_rate,
-                channels,
-                config.max_pending_windows,
-            )))
-        } else {
-            None
-        };
-
         Ok(Self {
             sinks,
             routing_table: Some(routing_table),
-            merger,
             event_callback: None,
             config,
         })
@@ -185,53 +154,6 @@ impl Router {
             if !direct.is_empty() {
                 self.write_to_indices(chunk, direct).await;
             }
-
-            // Feed to merger if applicable
-            if let Some(ref merger_mutex) = self.merger {
-                let mut merger = merger_mutex.lock().await;
-                let results = merger.add_chunk(chunk);
-                drop(merger); // Release lock before async writes
-
-                for result in results {
-                    self.write_merged_chunk(&result.chunk, table).await;
-
-                    if !result.is_complete() {
-                        self.emit_event(StreamEvent::MergeIncomplete {
-                            window_id: result.window_id,
-                            missing: result.missing,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    /// Writes a merged chunk to all sinks that want merged output.
-    async fn write_merged_chunk(&self, chunk: &AudioChunk, table: &RoutingTable) {
-        for group in table.merge_groups() {
-            self.write_to_indices(chunk, &group.sink_indices).await;
-        }
-    }
-
-    /// Checks for timed-out merge windows and emits them.
-    pub async fn check_merge_timeouts(&self) {
-        if let Some(ref merger_mutex) = self.merger {
-            let mut merger = merger_mutex.lock().await;
-            let results = merger.check_timeouts();
-            drop(merger); // Release lock
-
-            if let Some(ref table) = self.routing_table {
-                for result in results {
-                    self.write_merged_chunk(&result.chunk, table).await;
-
-                    if !result.is_complete() {
-                        self.emit_event(StreamEvent::MergeIncomplete {
-                            window_id: result.window_id,
-                            missing: result.missing,
-                        });
-                    }
-                }
-            }
         }
     }
 
@@ -270,8 +192,6 @@ impl Router {
         mut chunk_rx: mpsc::Receiver<AudioChunk>,
         mut cmd_rx: mpsc::Receiver<RouterCommand>,
     ) {
-        let mut timeout_interval = self.create_timeout_interval();
-
         loop {
             tokio::select! {
                 Some(chunk) = chunk_rx.recv() => {
@@ -282,23 +202,11 @@ impl Router {
                         break;
                     }
                 }
-                // Timeout tick only fires if merger exists
-                _ = tick_or_pend(timeout_interval.as_mut()) => {
-                    self.check_merge_timeouts().await;
-                }
                 else => break,
             }
         }
 
         self.stop_sinks().await;
-    }
-
-    /// Creates timeout interval for merge window checks (if merging is enabled).
-    fn create_timeout_interval(&self) -> Option<tokio::time::Interval> {
-        // Check at half the timeout period to catch windows before they exceed timeout
-        self.merger
-            .as_ref()
-            .map(|_| tokio::time::interval(self.config.merge_window_timeout / 2))
     }
 
     /// Handles a router command. Returns true if the router should stop.
@@ -309,15 +217,14 @@ impl Router {
     ) -> bool {
         match cmd {
             RouterCommand::Stop => {
-                self.drain_and_finalize(chunk_rx).await;
+                self.drain_remaining(chunk_rx).await;
                 true
             }
         }
     }
 
-    /// Drains remaining chunks and finalizes merge windows during shutdown.
-    async fn drain_and_finalize(&self, chunk_rx: &mut mpsc::Receiver<AudioChunk>) {
-        self.check_merge_timeouts().await;
+    /// Drains remaining chunks during shutdown.
+    async fn drain_remaining(&self, chunk_rx: &mut mpsc::Receiver<AudioChunk>) {
         while let Ok(chunk) = chunk_rx.try_recv() {
             self.write_chunk(&chunk).await;
         }
@@ -453,8 +360,6 @@ mod tests {
             &routes,
             vec![SourceId::new("mic"), SourceId::new("speaker")],
             StreamConfig::default(),
-            16000,
-            1,
         )
         .unwrap();
 
@@ -484,8 +389,6 @@ mod tests {
             &routes,
             vec![SourceId::new("mic"), SourceId::new("speaker")],
             StreamConfig::default(),
-            16000,
-            1,
         )
         .unwrap();
 
@@ -498,36 +401,5 @@ mod tests {
         router.write_chunk(&chunk_from("speaker", 50)).await;
         assert_eq!(sink_broadcast.writes(), 2);
         assert_eq!(sink_mic_only.writes(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_merged_routing() {
-        let sink_merged = Arc::new(TestSink::new("merged"));
-        let sink_direct = Arc::new(TestSink::new("direct"));
-
-        let routes = vec![
-            SinkRoute::merged(["mic", "speaker"]),
-            SinkRoute::Single(SourceId::new("mic")),
-        ];
-
-        let router = Router::with_routing(
-            vec![sink_merged.clone(), sink_direct.clone()],
-            &routes,
-            vec![SourceId::new("mic"), SourceId::new("speaker")],
-            StreamConfig::default(),
-            16000,
-            1,
-        )
-        .unwrap();
-
-        // Add mic chunk - direct sink gets it, merged waits for speaker
-        router.write_chunk(&chunk_from("mic", 50)).await;
-        assert_eq!(sink_direct.writes(), 1);
-        assert_eq!(sink_merged.writes(), 0); // Window not complete
-
-        // Add speaker chunk in same window - merged sink now gets output
-        router.write_chunk(&chunk_from("speaker", 50)).await;
-        assert_eq!(sink_direct.writes(), 1); // No direct route for speaker
-        assert_eq!(sink_merged.writes(), 1); // Window complete, merged chunk emitted
     }
 }

@@ -146,34 +146,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         source_ids.push(source_id);
     }
 
-    // Add individual file sinks for each source if multiple selected
-    if source_ids.len() > 1 {
-        for (idx, source_id) in source_ids.iter().enumerate() {
-            let source = &sources[selected_indices[idx]];
-            let filename = if source.is_system_audio {
-                "recording_system.wav".to_string()
-            } else {
-                format!("recording_{}.wav", source_id)
-            };
-            builder = builder.add_sink_from(FileSink::wav(&filename), source_id.as_str());
-        }
-        // Add merged output
-        let source_id_refs: Vec<&str> = source_ids.iter().map(|s| s.as_str()).collect();
-        builder = builder.add_sink_merged(FileSink::wav(&output_file), source_id_refs);
-        println!("\nOutput files:");
-        for (idx, source_id) in source_ids.iter().enumerate() {
-            let source = &sources[selected_indices[idx]];
-            let filename = if source.is_system_audio {
-                "recording_system.wav".to_string()
-            } else {
-                format!("recording_{}.wav", source_id)
-            };
-            println!("  - {} (from {})", filename, source_id);
-        }
-        println!("  - {} (merged)", output_file);
-    } else {
-        builder = builder.add_sink(FileSink::wav(&output_file));
-        println!("\nOutput: {}", output_file);
+    // Add file sinks for each source
+    println!("\nOutput files:");
+    for (idx, source_id) in source_ids.iter().enumerate() {
+        let source = &sources[selected_indices[idx]];
+        let filename = if source_ids.len() == 1 {
+            output_file.clone()
+        } else if source.is_system_audio {
+            "recording_system.wav".to_string()
+        } else {
+            format!("recording_{}.wav", source_id)
+        };
+        builder = builder.add_sink_from(FileSink::wav(&filename), source_id.as_str());
+        println!("  - {} (from {})", filename, source_id);
     }
 
     // Add event handler

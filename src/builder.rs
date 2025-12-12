@@ -20,14 +20,6 @@ const CHUNK_CHANNEL_CAPACITY: usize = 100;
 /// Only need 1 since commands are rare (just Stop).
 const COMMAND_CHANNEL_CAPACITY: usize = 1;
 
-/// Default sample rate when Native format is used.
-/// 16kHz is standard for speech recognition.
-const DEFAULT_NATIVE_SAMPLE_RATE: u32 = 16000;
-
-/// Default channel count when Native format is used.
-/// Mono is efficient and sufficient for speech.
-const DEFAULT_NATIVE_CHANNELS: u16 = 1;
-
 /// Specifies which audio input device to use.
 #[derive(Debug, Clone, Default)]
 pub(crate) enum DeviceSelection {
@@ -77,7 +69,8 @@ impl AudioSource {
     /// StreamAudio::builder()
     ///     .add_source("mic", AudioSource::default_device())
     ///     .add_source("speaker", AudioSource::system_audio())
-    ///     .add_sink_merged(FileSink::wav("meeting.wav"), ["mic", "speaker"])
+    ///     .add_sink_from(FileSink::wav("mic.wav"), "mic")
+    ///     .add_sink_from(FileSink::wav("speaker.wav"), "speaker")
     ///     .start()
     ///     .await?;
     /// ```
@@ -163,7 +156,6 @@ struct ResolvedAudioConfig {
 ///     .add_source("speaker", AudioSource::device("BlackHole 2ch"))
 ///     .add_sink_from(FileSink::wav("mic.wav"), "mic")
 ///     .add_sink_from(FileSink::wav("speaker.wav"), "speaker")
-///     .add_sink_merged(FileSink::wav("merged.wav"), ["mic", "speaker"])
 ///     .format(FormatPreset::Transcription)
 ///     .start()
 ///     .await?;
@@ -215,8 +207,7 @@ impl StreamAudioBuilder {
 
     /// Add a sink to receive audio from all sources.
     ///
-    /// For routing to specific sources, use [`add_sink_from()`](Self::add_sink_from)
-    /// or [`add_sink_merged()`](Self::add_sink_merged).
+    /// For routing to a specific source, use [`add_sink_from()`](Self::add_sink_from).
     pub fn add_sink<S: Sink + 'static>(mut self, sink: S) -> Self {
         self.sinks.push(Arc::new(sink));
         self.sink_routes.push(SinkRoute::Broadcast);
@@ -260,29 +251,6 @@ impl StreamAudioBuilder {
         self
     }
 
-    /// Add a sink that receives merged audio from multiple sources.
-    ///
-    /// The merger combines audio from the specified sources by averaging samples.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// StreamAudio::builder()
-    ///     .add_source("mic", AudioSource::device("Microphone"))
-    ///     .add_source("speaker", AudioSource::device("BlackHole"))
-    ///     .add_sink_merged(FileSink::wav("merged.wav"), ["mic", "speaker"])
-    /// ```
-    pub fn add_sink_merged<S, I, Id>(mut self, sink: S, source_ids: I) -> Self
-    where
-        S: Sink + 'static,
-        I: IntoIterator<Item = Id>,
-        Id: Into<SourceId>,
-    {
-        self.sinks.push(Arc::new(sink));
-        self.sink_routes.push(SinkRoute::merged(source_ids));
-        self
-    }
-
     /// Returns the configured source IDs.
     pub fn source_ids(&self) -> Vec<SourceId> {
         self.sources.iter().map(|(id, _)| id.clone()).collect()
@@ -302,18 +270,6 @@ impl StreamAudioBuilder {
     /// Set custom stream configuration.
     pub fn with_config(mut self, config: StreamConfig) -> Self {
         self.config = config;
-        self
-    }
-
-    /// Set maximum pending merge windows.
-    ///
-    /// Limits merge backlog to N × `merge_window_duration`. Increase if sources
-    /// have significant clock drift. Default is 10 (~1 second at 100ms windows).
-    ///
-    /// When the limit is exceeded, oldest windows are evicted and emitted with
-    /// available data (missing sources filled with silence).
-    pub fn max_pending_windows(mut self, count: usize) -> Self {
-        self.config.max_pending_windows = count;
         self
     }
 
@@ -344,6 +300,7 @@ impl StreamAudioBuilder {
         &self,
         audio_config: &ResolvedAudioConfig,
         source_id: SourceId,
+        session_start: std::time::Instant,
     ) -> CaptureConfig {
         CaptureConfig {
             device_sample_rate: audio_config.device_sample_rate,
@@ -352,6 +309,7 @@ impl StreamAudioBuilder {
             target_channels: audio_config.target_channels,
             chunk_duration: self.config.chunk_duration,
             source_id: Some(source_id),
+            session_start,
         }
     }
 
@@ -369,6 +327,9 @@ impl StreamAudioBuilder {
     pub async fn start(self) -> Result<Session, StreamAudioError> {
         self.validate()?;
 
+        // Shared session epoch for synchronized timestamps across all sources
+        let session_start = std::time::Instant::now();
+
         let (chunk_tx, chunk_rx) = mpsc::channel(CHUNK_CHANNEL_CAPACITY);
         let (router_cmd_tx, router_cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
 
@@ -377,21 +338,11 @@ impl StreamAudioBuilder {
         // Create router with routing
         let source_ids = self.source_ids();
 
-        // Determine target sample rate and channels for merged audio.
-        // For Native format, use common defaults since merger needs consistent values.
-        let target_sample_rate = self
-            .format
-            .sample_rate()
-            .unwrap_or(DEFAULT_NATIVE_SAMPLE_RATE);
-        let target_channels = self.format.channels().unwrap_or(DEFAULT_NATIVE_CHANNELS);
-
         let mut router = Router::with_routing(
             self.sinks.clone(),
             &self.sink_routes,
             source_ids,
             self.config.clone(),
-            target_sample_rate,
-            target_channels,
         )?;
         if let Some(callback) = self.event_callback.clone() {
             router = router.with_event_callback(callback);
@@ -427,6 +378,7 @@ impl StreamAudioBuilder {
                 &state,
                 &mut capture_handles,
                 &mut capture_streams,
+                session_start,
             )?;
         }
 
@@ -465,6 +417,7 @@ impl StreamAudioBuilder {
                 &state,
                 &mut capture_handles,
                 &mut capture_streams,
+                session_start,
             )?;
         }
 
@@ -518,9 +471,10 @@ impl StreamAudioBuilder {
         state: &Arc<SessionState>,
         capture_handles: &mut Vec<tokio::task::JoinHandle<()>>,
         capture_streams: &mut Vec<crate::source::CaptureStream>,
+        session_start: std::time::Instant,
     ) -> Result<(), StreamAudioError> {
         let audio_config = self.resolve_source_device(source)?;
-        let capture_config = self.create_capture_config(&audio_config, source_id.clone());
+        let capture_config = self.create_capture_config(&audio_config, source_id.clone(), session_start);
         let (capture_stream, ring_consumer) = audio_config.source.start_capture()?;
         let capture_handle = spawn_capture_bridge(
             ring_consumer,
@@ -609,15 +563,12 @@ mod tests {
             .add_source("mic", AudioSource::default_device())
             .add_source("speaker", AudioSource::default_device())
             .add_sink_from(crate::sink::ChannelSink::new(mpsc::channel(1).0), "mic")
-            .add_sink_merged(
-                crate::sink::ChannelSink::new(mpsc::channel(1).0),
-                ["mic", "speaker"],
-            );
+            .add_sink_from(crate::sink::ChannelSink::new(mpsc::channel(1).0), "speaker");
 
         assert_eq!(builder.sinks.len(), 2);
         assert_eq!(builder.sink_routes.len(), 2);
         assert!(matches!(&builder.sink_routes[0], SinkRoute::Single(_)));
-        assert!(matches!(&builder.sink_routes[1], SinkRoute::Merged(_)));
+        assert!(matches!(&builder.sink_routes[1], SinkRoute::Single(_)));
     }
 
     #[test]

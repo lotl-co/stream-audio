@@ -36,9 +36,6 @@ use crate::source::SourceId;
 ///         StreamEvent::SourceStopped { source_id, reason } => {
 ///             eprintln!("Source {} stopped: {}", source_id, reason);
 ///         }
-///         StreamEvent::MergeIncomplete { window_id, missing } => {
-///             eprintln!("Merge window {} incomplete, missing: {:?}", window_id, missing);
-///         }
 ///         StreamEvent::AudioConfigChanged { source_id, previous, current, message } => {
 ///             eprintln!("Config changed for {}: {:?} -> {:?} ({})", source_id, previous, current, message);
 ///         }
@@ -97,18 +94,6 @@ pub enum StreamEvent {
         source_id: SourceId,
         /// Why the source stopped.
         reason: String,
-    },
-
-    /// A merge window was emitted with missing sources.
-    ///
-    /// This happens when the merge timeout expires before all sources
-    /// have contributed to a time window. Missing sources are filled
-    /// with silence.
-    MergeIncomplete {
-        /// The window ID that was incomplete.
-        window_id: u64,
-        /// Sources that didn't contribute to this window.
-        missing: Vec<SourceId>,
     },
 
     /// Audio device configuration changed during capture.

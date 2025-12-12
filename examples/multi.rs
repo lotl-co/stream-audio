@@ -88,7 +88,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Recording for 5 seconds with:");
     println!("  - Microphone -> mic.wav + transcription channel");
     println!("  - Speaker -> speaker.wav + transcription channel");
-    println!("  - Merged -> merged.wav");
     println!();
 
     // Start multi-source capture
@@ -99,7 +98,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Route sinks to specific sources
         .add_sink_from(FileSink::wav("mic.wav"), "mic")
         .add_sink_from(FileSink::wav("speaker.wav"), "speaker")
-        .add_sink_merged(FileSink::wav("merged.wav"), ["mic", "speaker"])
         // Add channel sinks for real-time processing
         .add_sink_from(ChannelSink::new(mic_tx), "mic")
         .add_sink_from(ChannelSink::new(speaker_tx), "speaker")
@@ -116,9 +114,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             StreamEvent::SourceStopped { source_id, reason } => {
                 println!("Source stopped: {source_id} - {reason}");
-            }
-            StreamEvent::MergeIncomplete { window_id, missing } => {
-                eprintln!("Merge window {window_id} incomplete, missing: {missing:?}");
             }
             _ => {}
         })
@@ -163,7 +158,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nFiles saved:");
     println!("  - mic.wav (microphone only)");
     println!("  - speaker.wav (speaker only)");
-    println!("  - merged.wav (combined audio)");
 
     Ok(())
 }

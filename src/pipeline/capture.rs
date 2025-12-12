@@ -86,6 +86,8 @@ pub struct CaptureConfig {
     pub chunk_duration: Duration,
     /// Source identifier for multi-source capture (None for single-source).
     pub source_id: Option<SourceId>,
+    /// Session start time for synchronized timestamps across sources.
+    pub session_start: Instant,
 }
 
 /// The capture bridge reads audio from the ring buffer and forwards converted chunks.
@@ -110,6 +112,8 @@ pub struct CaptureBridge {
     flow_monitor: FlowMonitor,
     /// Optional callback for emitting flow events.
     event_callback: Option<EventCallback>,
+    /// Session start time for synchronized timestamps across sources.
+    session_start: Instant,
 }
 
 impl CaptureBridge {
@@ -159,6 +163,7 @@ impl CaptureBridge {
             source_id: config.source_id.clone(),
             flow_monitor: FlowMonitor::new(config.source_id.clone()),
             event_callback,
+            session_start: config.session_start,
         }
     }
 
@@ -170,7 +175,8 @@ impl CaptureBridge {
     /// 3. Drains remaining audio on shutdown
     pub async fn run(mut self) {
         let mut interval = tokio::time::interval(self.poll_interval);
-        let mut output_timestamp = Duration::ZERO;
+        // Start timestamp at current offset from session start for cross-source alignment
+        let mut output_timestamp = self.session_start.elapsed();
 
         // Main capture loop
         while self.state.running.load(Ordering::SeqCst) {
@@ -305,6 +311,7 @@ mod tests {
             target_channels: 1,
             chunk_duration: Duration::from_millis(100),
             source_id: None,
+            session_start: Instant::now(),
         };
 
         assert_eq!(config.device_sample_rate, 48000);
@@ -320,6 +327,7 @@ mod tests {
             target_channels: 1,
             chunk_duration: Duration::from_millis(100),
             source_id: Some(SourceId::new("mic")),
+            session_start: Instant::now(),
         };
 
         assert_eq!(config.source_id.as_ref().unwrap().as_str(), "mic");
