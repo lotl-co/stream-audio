@@ -23,11 +23,8 @@ use super::{SystemAudioBackend, SystemAudioEvent};
 use crate::source::CaptureStream;
 use crate::StreamAudioError;
 
-// Audio format constants (must match Swift implementation)
-const SAMPLE_RATE: u32 = 48000;
-const CHANNEL_COUNT: u16 = 2;
-/// Ring buffer capacity: 30 seconds of stereo 48kHz audio
-const BUFFER_CAPACITY: usize = SAMPLE_RATE as usize * CHANNEL_COUNT as usize * 30;
+/// Ring buffer duration in seconds
+const BUFFER_DURATION_SECS: usize = 30;
 
 // Symmetric i16 max for audio conversion
 const I16_MAX_SYMMETRIC: f32 = i16::MAX as f32;
@@ -91,6 +88,27 @@ extern "C" {
     #[allow(dead_code)] // Available for future use
     fn sck_audio_is_running(session: SCKAudioSessionRef) -> i32;
     fn sck_audio_session_error(session: SCKAudioSessionRef) -> *const c_char;
+
+    // Audio format constants - Swift is the single source of truth
+    fn sck_audio_sample_rate() -> u32;
+    fn sck_audio_channels() -> u32;
+}
+
+/// Get the sample rate from Swift (single source of truth).
+fn get_sample_rate() -> u32 {
+    // SAFETY: sck_audio_sample_rate is a pure function with no side effects
+    unsafe { sck_audio_sample_rate() }
+}
+
+/// Get the channel count from Swift (single source of truth).
+fn get_channel_count() -> u16 {
+    // SAFETY: sck_audio_channels is a pure function with no side effects
+    unsafe { sck_audio_channels() as u16 }
+}
+
+/// Calculate ring buffer capacity based on Swift's audio format.
+fn buffer_capacity() -> usize {
+    get_sample_rate() as usize * get_channel_count() as usize * BUFFER_DURATION_SECS
 }
 
 // MARK: - Callback Context
@@ -245,7 +263,7 @@ impl Drop for SCKNativeBackend {
 impl SystemAudioBackend for SCKNativeBackend {
     fn start_capture(self: Box<Self>) -> Result<(CaptureStream, HeapCons<i16>), StreamAudioError> {
         // Create a fresh ring buffer for this capture session
-        let ring_buffer = HeapRb::<i16>::new(BUFFER_CAPACITY);
+        let ring_buffer = HeapRb::<i16>::new(buffer_capacity());
         let (producer, consumer) = ring_buffer.split();
 
         // Set the producer in the context
@@ -293,7 +311,7 @@ impl SystemAudioBackend for SCKNativeBackend {
     }
 
     fn native_config(&self) -> (u32, u16) {
-        (SAMPLE_RATE, CHANNEL_COUNT)
+        (get_sample_rate(), get_channel_count())
     }
 
     fn name(&self) -> &'static str {
@@ -325,9 +343,11 @@ mod tests {
     }
 
     #[test]
-    fn test_constants() {
-        assert_eq!(SAMPLE_RATE, 48000);
-        assert_eq!(CHANNEL_COUNT, 2);
-        assert!(BUFFER_CAPACITY > 0);
+    fn test_audio_format_from_swift() {
+        // Swift is the single source of truth for audio format
+        // These values should match what SCK actually outputs
+        assert_eq!(get_sample_rate(), 48000);
+        assert_eq!(get_channel_count(), 2);
+        assert!(buffer_capacity() > 0);
     }
 }

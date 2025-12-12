@@ -47,9 +47,9 @@ final class SCKAudioSession: NSObject, SCStreamOutput, SCStreamDelegate {
     // Store C string for FFI return
     private var lastErrorCString: [CChar] = []
 
-    // Audio format constants
-    private let sampleRate: Int = 48000
-    private let channelCount: Int = 2
+    // Audio format from shared constants
+    private var sampleRate: Int { Int(AudioFormat.sampleRate) }
+    private var channelCount: Int { Int(AudioFormat.channels) }
 
     init(callback: @escaping SCKAudioCallback, context: UnsafeMutableRawPointer?) {
         self.callback = callback
@@ -322,4 +322,22 @@ public func sck_audio_session_error(session: UnsafeMutableRawPointer?) -> Unsafe
 
     let obj = Unmanaged<SCKAudioSession>.fromOpaque(session).takeUnretainedValue()
     return obj.lastError
+}
+
+// MARK: - Audio Format Constants
+
+/// Audio format constants - single source of truth for Rust FFI
+private enum AudioFormat {
+    static let sampleRate: UInt32 = 48000
+    static let channels: UInt32 = 2
+}
+
+@_cdecl("sck_audio_sample_rate")
+public func sck_audio_sample_rate() -> UInt32 {
+    return AudioFormat.sampleRate
+}
+
+@_cdecl("sck_audio_channels")
+public func sck_audio_channels() -> UInt32 {
+    return AudioFormat.channels
 }

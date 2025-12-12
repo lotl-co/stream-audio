@@ -89,6 +89,20 @@ int sck_audio_is_running(SCKAudioSessionRef session);
 /// @return Error string, valid until next call on this session. Do not free.
 const char* sck_audio_session_error(SCKAudioSessionRef session);
 
+// MARK: - Audio Format Constants
+
+/// Get the sample rate used for system audio capture.
+/// This is the single source of truth - Rust should query this rather than hardcoding.
+///
+/// @return Sample rate in Hz (typically 48000)
+uint32_t sck_audio_sample_rate(void);
+
+/// Get the channel count used for system audio capture.
+/// This is the single source of truth - Rust should query this rather than hardcoding.
+///
+/// @return Number of channels (typically 2 for stereo)
+uint32_t sck_audio_channels(void);
+
 #ifdef __cplusplus
 }
 #endif
