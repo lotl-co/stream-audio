@@ -60,6 +60,8 @@ final class SCKAudioSession: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Synchronous start. Blocks until capture starts or fails.
     /// - Warning: Do not call from main thread (deadlocks).
     func start() -> SCKError {
+        // Why assert not precondition: Rust caller always uses Tokio threads, so this
+        // is a dev safety net. Prefer recoverable deadlock over crash in production.
         assert(!Thread.isMainThread, "sck_audio_start: main thread deadlocks")
 
         guard !isRunning else {
