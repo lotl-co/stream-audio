@@ -220,37 +220,25 @@ impl SCKNativeBackend {
 
 impl Drop for SCKNativeBackend {
     fn drop(&mut self) {
-        // Signal callbacks to stop processing immediately.
-        // Any callback that checks is_active after this point will return early.
+        // Teardown must handle callbacks that GCD may have already dispatched but
+        // not yet executed. We can't cancel queued work, so we: signal, stop, wait.
+
+        // Tell callbacks to exit early. They check this flag first thing.
         self.context.is_active.store(false, Ordering::SeqCst);
 
-        // Stop capture. Swift's stop() waits synchronously for SCStream.stopCapture(),
-        // so after this returns, no NEW callbacks will be dispatched.
-        // sck_audio_stop is idempotent - safe to call multiple times.
-        unsafe {
-            sck_audio_stop(SCKAudioSessionRef(self.session.0));
-        }
+        // Stop capture. After this, no new callbacks will be dispatched.
+        unsafe { sck_audio_stop(SCKAudioSessionRef(self.session.0)) }
 
-        // Brief wait for any in-flight callbacks that were already dispatched
-        // but haven't yet checked is_active. Swift's GCD queues are fast, so
-        // 50ms is generous. The callback checks is_active at the top, so even
-        // if timing is off, the callback will early-return without touching
-        // the producer.
+        // Let in-flight callbacks drain. 50ms is conservative—callbacks complete
+        // in <1ms. Alternatives (condvars, refcounting) add hot-path overhead for
+        // no real benefit. The is_active check makes this fail-safe regardless.
         std::thread::sleep(std::time::Duration::from_millis(50));
 
-        // Destroy the Swift session. This releases Swift's SCKAudioSession object.
-        unsafe {
-            sck_audio_destroy(SCKAudioSessionRef(self.session.0));
-        }
+        // Now safe to destroy—all callbacks have either completed or early-returned.
+        unsafe { sck_audio_destroy(SCKAudioSessionRef(self.session.0)) }
 
-        // Reclaim the Arc refcount we gave to Swift via Arc::into_raw().
-        // This decrements the refcount. Combined with our stored Arc dropping,
-        // the CallbackContext will be freed when this Drop completes.
-        // SAFETY: context_raw_for_swift was created by Arc::into_raw() in new()
-        // and has not been reclaimed elsewhere.
-        unsafe {
-            drop(Arc::from_raw(self.context_raw_for_swift));
-        }
+        // Reclaim the Arc refcount we gave Swift via into_raw() in new().
+        unsafe { drop(Arc::from_raw(self.context_raw_for_swift)) }
     }
 }
 
