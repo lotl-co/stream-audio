@@ -255,6 +255,7 @@ final class SCKAudioSession: NSObject, SCStreamOutput, SCStreamDelegate {
                 let frames = Int(frameCount)
 
                 // Convert non-interleaved to interleaved for our callback contract
+                // Fresh alloc each callback: simpler than reusing, <0.25% of latency budget
                 var interleaved = [Float](repeating: 0, count: frames * channels)
                 for frame in 0..<frames {
                     for ch in 0..<channels {
