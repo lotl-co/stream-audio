@@ -3,6 +3,16 @@ import ScreenCaptureKit
 import CoreMedia
 import AVFoundation
 
+// MARK: - Debug Configuration
+
+/// Enable verbose logging for debugging SCK audio capture.
+/// Set `SCK_AUDIO_DEBUG=1` environment variable to enable in release builds.
+#if DEBUG
+private let sckAudioDebugLogging = true
+#else
+private let sckAudioDebugLogging = ProcessInfo.processInfo.environment["SCK_AUDIO_DEBUG"] != nil
+#endif
+
 // MARK: - C Types (must match sck_audio.h)
 
 public typealias SCKAudioCallback = @convention(c) (
@@ -175,15 +185,18 @@ final class SCKAudioSession: NSObject, SCStreamOutput, SCStreamDelegate {
         callbackCount += 1
         let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
 
-        // Log every callback for first 2 seconds, then every 50th callback
-        let timeSinceStart = Date().timeIntervalSince(lastLogTime)
-        if callbackCount <= 20 || callbackCount % 50 == 0 {
+        // Debug logging: first 20 callbacks, then every 50th (~1/sec at 48kHz)
+        // Enable via DEBUG build or SCK_AUDIO_DEBUG=1 environment variable
+        if sckAudioDebugLogging && (callbackCount <= 20 || callbackCount % 50 == 0) {
+            let timeSinceStart = Date().timeIntervalSince(lastLogTime)
             NSLog("[SCK] Callback #%d: frames=%d, running=%d, time=%.2fs",
                   callbackCount, frameCount, isRunning ? 1 : 0, timeSinceStart)
         }
 
         guard isRunning else {
-            NSLog("[SCK] Callback #%d REJECTED: isRunning=false", callbackCount)
+            if sckAudioDebugLogging {
+                NSLog("[SCK] Callback #%d REJECTED: isRunning=false", callbackCount)
+            }
             return
         }
 

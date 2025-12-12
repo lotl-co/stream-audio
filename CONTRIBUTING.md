@@ -213,6 +213,30 @@ cargo run --example simple_record
 AUDIO_DEVICE="Built-in Microphone" cargo run --example simple_record
 ```
 
+### Debugging System Audio (macOS)
+
+The native ScreenCaptureKit backend (`sck-native` feature) includes debug logging that can help diagnose audio capture issues.
+
+**Enable debug logging:**
+
+```bash
+# Via environment variable (works in release builds)
+SCK_AUDIO_DEBUG=1 cargo run --example system_audio --features sck-native
+
+# Debug builds have logging enabled by default
+cargo run --example system_audio --features sck-native
+```
+
+**What gets logged:**
+- First 20 audio callbacks (to verify capture is working)
+- Every 50th callback thereafter (~1 log/sec at 48kHz)
+- Rejected callbacks when `isRunning=false`
+
+Logs appear in the system log and can be viewed with:
+```bash
+log stream --predicate 'eventMessage contains "[SCK]"' --level debug
+```
+
 ## Questions?
 
 - Open an issue for bugs or feature requests
