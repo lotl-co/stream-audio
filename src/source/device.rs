@@ -262,11 +262,68 @@ mod tests {
         assert_eq!(config.buffer_capacity, 16000 * 30);
     }
 
+    #[test]
+    fn test_device_config_custom_values() {
+        let config = DeviceConfig {
+            sample_rate: 48000,
+            channels: 2,
+            buffer_capacity: 48000 * 60, // 60 seconds stereo
+        };
+        assert_eq!(config.sample_rate, 48000);
+        assert_eq!(config.channels, 2);
+        assert_eq!(config.buffer_capacity, 48000 * 60);
+    }
+
+    #[test]
+    fn test_device_not_found_error() {
+        // Try to open a device with a name that definitely doesn't exist
+        let result = AudioDevice::open_by_name("NonexistentDevice12345XYZ");
+        assert!(result.is_err());
+
+        if let Err(StreamAudioError::DeviceNotFound { name }) = result {
+            assert_eq!(name, "NonexistentDevice12345XYZ");
+        } else {
+            panic!("Expected DeviceNotFound error");
+        }
+    }
+
     // Note: Device tests require actual audio hardware and are skipped in CI
     #[test]
     #[ignore = "requires audio hardware"]
     fn test_open_default_device() {
         let device = AudioDevice::open_default().unwrap();
         println!("Default device: {}", device.name());
+    }
+
+    #[test]
+    #[ignore = "requires audio hardware"]
+    fn test_audio_device_with_config_builder() {
+        let custom_config = DeviceConfig {
+            sample_rate: 44100,
+            channels: 2,
+            buffer_capacity: 44100 * 10,
+        };
+
+        let device = AudioDevice::open_default()
+            .unwrap()
+            .with_config(custom_config);
+
+        let config = device.config();
+        assert_eq!(config.sample_rate, 44100);
+        assert_eq!(config.channels, 2);
+        assert_eq!(config.buffer_capacity, 44100 * 10);
+    }
+
+    #[test]
+    #[ignore = "requires audio hardware"]
+    fn test_audio_device_native_config() {
+        let device = AudioDevice::open_default().unwrap();
+        let result = device.native_config();
+        assert!(result.is_ok());
+
+        let (sample_rate, channels) = result.unwrap();
+        // Native config should have reasonable values
+        assert!(sample_rate >= 8000 && sample_rate <= 192000);
+        assert!(channels >= 1 && channels <= 8);
     }
 }

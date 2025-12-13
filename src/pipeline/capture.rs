@@ -667,4 +667,471 @@ mod tests {
         let dc = calculate_dc_offset(1000, 0);
         assert_eq!(dc, 0.0);
     }
+
+    // ==================== FlowMonitor Tests ====================
+
+    #[test]
+    fn test_flow_monitor_initial_state_is_flowing() {
+        let monitor = FlowMonitor::new(Some(SourceId::new("test")));
+        assert!(monitor.is_flowing);
+    }
+
+    #[test]
+    fn test_flow_monitor_audio_keeps_flowing_no_event() {
+        let mut monitor = FlowMonitor::new(Some(SourceId::new("test")));
+        // Continuous audio should not emit any events
+        assert!(monitor.update(true).is_none());
+        assert!(monitor.update(true).is_none());
+        assert!(monitor.update(true).is_none());
+        assert!(monitor.is_flowing);
+    }
+
+    #[test]
+    fn test_flow_monitor_silence_under_threshold_no_event() {
+        let mut monitor = FlowMonitor::new(Some(SourceId::new("test")));
+        // Start with audio
+        assert!(monitor.update(true).is_none());
+        // Brief silence under 500ms threshold should not emit
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(monitor.update(false).is_none());
+        assert!(monitor.is_flowing); // Still considered flowing
+    }
+
+    #[test]
+    fn test_flow_monitor_silence_over_threshold_emits_stopped() {
+        let mut monitor = FlowMonitor::new(Some(SourceId::new("test")));
+        // Start with audio
+        assert!(monitor.update(true).is_none());
+        // Wait past silence threshold
+        std::thread::sleep(Duration::from_millis(510));
+        let event = monitor.update(false);
+        assert!(event.is_some());
+        if let Some(StreamEvent::AudioFlowStopped {
+            source_id,
+            silent_duration_ms,
+        }) = event
+        {
+            assert_eq!(source_id.as_str(), "test");
+            assert!(silent_duration_ms >= 500);
+        } else {
+            panic!("Expected AudioFlowStopped event");
+        }
+        assert!(!monitor.is_flowing);
+    }
+
+    #[test]
+    fn test_flow_monitor_audio_resumes_after_stopped_emits_resumed() {
+        let mut monitor = FlowMonitor::new(Some(SourceId::new("test")));
+        // Get into stopped state
+        std::thread::sleep(Duration::from_millis(510));
+        let _ = monitor.update(false);
+        assert!(!monitor.is_flowing);
+
+        // Resume with audio
+        let event = monitor.update(true);
+        assert!(event.is_some());
+        if let Some(StreamEvent::AudioFlowResumed { source_id }) = event {
+            assert_eq!(source_id.as_str(), "test");
+        } else {
+            panic!("Expected AudioFlowResumed event");
+        }
+        assert!(monitor.is_flowing);
+    }
+
+    #[test]
+    fn test_flow_monitor_resumed_only_emits_once() {
+        let mut monitor = FlowMonitor::new(Some(SourceId::new("test")));
+        // Get into stopped state
+        std::thread::sleep(Duration::from_millis(510));
+        let _ = monitor.update(false);
+
+        // First audio should emit resumed
+        assert!(monitor.update(true).is_some());
+        // Subsequent audio should not emit again
+        assert!(monitor.update(true).is_none());
+        assert!(monitor.update(true).is_none());
+    }
+
+    #[test]
+    fn test_flow_monitor_stopped_only_emits_once() {
+        let mut monitor = FlowMonitor::new(Some(SourceId::new("test")));
+        // Wait past threshold and emit stopped
+        std::thread::sleep(Duration::from_millis(510));
+        assert!(monitor.update(false).is_some());
+        // Further silence should not emit again
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(monitor.update(false).is_none());
+    }
+
+    #[test]
+    fn test_flow_monitor_without_source_id_uses_default() {
+        let mut monitor = FlowMonitor::new(None);
+        std::thread::sleep(Duration::from_millis(510));
+        let event = monitor.update(false);
+        if let Some(StreamEvent::AudioFlowStopped { source_id, .. }) = event {
+            assert_eq!(source_id.as_str(), "default");
+        } else {
+            panic!("Expected AudioFlowStopped event");
+        }
+    }
+
+    // ==================== GapMonitor Tests ====================
+
+    #[test]
+    fn test_gap_monitor_no_gap_when_nonzero_samples() {
+        let mut monitor = GapMonitor::new(Some(SourceId::new("test")), 16000);
+        let samples: Vec<i16> = vec![100; 1000];
+        let events = monitor.scan_chunk(&samples, 0);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_gap_monitor_short_gap_under_threshold_no_event() {
+        let mut monitor = GapMonitor::new(Some(SourceId::new("test")), 16000);
+        // At 16kHz, 50ms = 800 samples. Create a 400-sample gap (25ms).
+        let mut samples = vec![100i16; 100];
+        samples.extend(vec![0i16; 400]); // Under threshold
+        samples.extend(vec![100i16; 100]);
+
+        let events = monitor.scan_chunk(&samples, 0);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_gap_monitor_gap_at_threshold_emits_event() {
+        let mut monitor = GapMonitor::new(Some(SourceId::new("test")), 16000);
+        // At 16kHz, 50ms = 800 samples
+        let mut samples = vec![100i16; 100];
+        samples.extend(vec![0i16; 800]); // Exactly at threshold
+        samples.extend(vec![100i16; 100]);
+
+        let events = monitor.scan_chunk(&samples, 0);
+        assert_eq!(events.len(), 1);
+        if let StreamEvent::AudioGapDetected {
+            gap_duration_ms,
+            gap_samples,
+            ..
+        } = &events[0]
+        {
+            assert_eq!(*gap_samples, 800);
+            assert_eq!(*gap_duration_ms, 50);
+        } else {
+            panic!("Expected AudioGapDetected event");
+        }
+    }
+
+    #[test]
+    fn test_gap_monitor_gap_over_threshold_emits_event() {
+        let mut monitor = GapMonitor::new(Some(SourceId::new("test")), 16000);
+        // 1600 samples = 100ms at 16kHz
+        let mut samples = vec![100i16; 100];
+        samples.extend(vec![0i16; 1600]);
+        samples.extend(vec![100i16; 100]);
+
+        let events = monitor.scan_chunk(&samples, 0);
+        assert_eq!(events.len(), 1);
+        if let StreamEvent::AudioGapDetected {
+            gap_duration_ms,
+            gap_samples,
+            ..
+        } = &events[0]
+        {
+            assert_eq!(*gap_samples, 1600);
+            assert_eq!(*gap_duration_ms, 100);
+        } else {
+            panic!("Expected AudioGapDetected event");
+        }
+    }
+
+    #[test]
+    fn test_gap_monitor_gap_spanning_chunks() {
+        let mut monitor = GapMonitor::new(Some(SourceId::new("test")), 16000);
+        // First chunk ends with 400 zeros
+        let mut chunk1 = vec![100i16; 100];
+        chunk1.extend(vec![0i16; 400]);
+        let events1 = monitor.scan_chunk(&chunk1, 0);
+        assert!(events1.is_empty()); // Not enough yet
+
+        // Second chunk starts with 500 zeros (total 900 > 800 threshold)
+        let mut chunk2 = vec![0i16; 500];
+        chunk2.extend(vec![100i16; 100]);
+        let events2 = monitor.scan_chunk(&chunk2, 500);
+        assert_eq!(events2.len(), 1);
+        if let StreamEvent::AudioGapDetected { gap_samples, .. } = &events2[0] {
+            assert_eq!(*gap_samples, 900); // 400 + 500
+        } else {
+            panic!("Expected AudioGapDetected event");
+        }
+    }
+
+    #[test]
+    fn test_gap_monitor_multiple_gaps_in_chunk() {
+        let mut monitor = GapMonitor::new(Some(SourceId::new("test")), 16000);
+        // Two separate gaps in one chunk
+        let mut samples = vec![100i16; 50];
+        samples.extend(vec![0i16; 900]); // First gap
+        samples.extend(vec![100i16; 50]);
+        samples.extend(vec![0i16; 1000]); // Second gap
+        samples.extend(vec![100i16; 50]);
+
+        let events = monitor.scan_chunk(&samples, 0);
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn test_gap_monitor_flush_emits_pending_gap() {
+        let mut monitor = GapMonitor::new(Some(SourceId::new("test")), 16000);
+        // Chunk ending with zeros at threshold
+        let mut samples = vec![100i16; 100];
+        samples.extend(vec![0i16; 900]);
+        let events = monitor.scan_chunk(&samples, 0);
+        assert!(events.is_empty()); // Gap not closed yet
+
+        // Flush should emit the pending gap
+        let flush_event = monitor.flush();
+        assert!(flush_event.is_some());
+        if let Some(StreamEvent::AudioGapDetected { gap_samples, .. }) = flush_event {
+            assert_eq!(gap_samples, 900);
+        } else {
+            panic!("Expected AudioGapDetected event");
+        }
+    }
+
+    #[test]
+    fn test_gap_monitor_flush_no_event_when_under_threshold() {
+        let mut monitor = GapMonitor::new(Some(SourceId::new("test")), 16000);
+        // Chunk ending with zeros under threshold
+        let mut samples = vec![100i16; 100];
+        samples.extend(vec![0i16; 400]);
+        let _ = monitor.scan_chunk(&samples, 0);
+
+        // Flush should not emit (under threshold)
+        assert!(monitor.flush().is_none());
+    }
+
+    #[test]
+    fn test_gap_monitor_cumulative_stats() {
+        let mut monitor = GapMonitor::new(Some(SourceId::new("test")), 16000);
+        // Create multiple gaps
+        let mut samples = vec![100i16; 50];
+        samples.extend(vec![0i16; 800]); // 50ms gap
+        samples.extend(vec![100i16; 50]);
+        samples.extend(vec![0i16; 1600]); // 100ms gap
+        samples.extend(vec![100i16; 50]);
+
+        let _ = monitor.scan_chunk(&samples, 0);
+        let (gaps, total_ms) = monitor.stats();
+        assert_eq!(gaps, 2);
+        assert_eq!(total_ms, 150); // 50 + 100
+    }
+
+    #[test]
+    fn test_gap_monitor_threshold_calculation_44100hz() {
+        let monitor = GapMonitor::new(None, 44100);
+        // 50ms at 44100Hz = 2205 samples
+        assert_eq!(monitor.threshold_samples, 2205);
+    }
+
+    #[test]
+    fn test_gap_monitor_threshold_calculation_16000hz() {
+        let monitor = GapMonitor::new(None, 16000);
+        // 50ms at 16000Hz = 800 samples
+        assert_eq!(monitor.threshold_samples, 800);
+    }
+
+    // ==================== QualityMonitor Tests ====================
+
+    #[test]
+    fn test_quality_monitor_peak_amplitude_positive() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+        let samples = vec![100i16, 200, 300, 150];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport { peak_amplitude, .. } = event {
+            assert_eq!(peak_amplitude, 300);
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
+
+    #[test]
+    fn test_quality_monitor_peak_amplitude_negative() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+        let samples = vec![-100i16, -500, -200];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport { peak_amplitude, .. } = event {
+            assert_eq!(peak_amplitude, 500); // Absolute value
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
+
+    #[test]
+    fn test_quality_monitor_peak_amplitude_mixed() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+        let samples = vec![100i16, -600, 300, -200];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport { peak_amplitude, .. } = event {
+            assert_eq!(peak_amplitude, 600);
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
+
+    #[test]
+    fn test_quality_monitor_rms_silence() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+        let samples = vec![0i16; 100];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport { rms_db, .. } = event {
+            assert_eq!(rms_db, SILENCE_FLOOR_DB);
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
+
+    #[test]
+    fn test_quality_monitor_rms_full_scale() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+        // All samples at max should give ~0dB
+        let samples = vec![i16::MAX; 100];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport { rms_db, .. } = event {
+            assert!((rms_db - 0.0).abs() < 0.1);
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
+
+    #[test]
+    fn test_quality_monitor_clipping_at_max() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+        let samples = vec![i16::MAX, i16::MAX, 100, 200];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport {
+            clipped_samples,
+            total_clipped_samples,
+            ..
+        } = event
+        {
+            assert_eq!(clipped_samples, 2);
+            assert_eq!(total_clipped_samples, 2);
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
+
+    #[test]
+    fn test_quality_monitor_clipping_at_min() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+        let samples = vec![i16::MIN, i16::MIN, i16::MIN, 100];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport {
+            clipped_samples, ..
+        } = event
+        {
+            assert_eq!(clipped_samples, 3);
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
+
+    #[test]
+    fn test_quality_monitor_cumulative_clipping() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+
+        // First chunk with 2 clipped
+        let samples1 = vec![i16::MAX, i16::MAX, 100];
+        let _ = monitor.analyze_chunk(&samples1, Duration::ZERO);
+
+        // Second chunk with 3 clipped
+        let samples2 = vec![i16::MIN, i16::MIN, i16::MIN];
+        let event = monitor.analyze_chunk(&samples2, Duration::from_millis(100));
+
+        if let StreamEvent::AudioQualityReport {
+            clipped_samples,
+            total_clipped_samples,
+            ..
+        } = event
+        {
+            assert_eq!(clipped_samples, 3); // This chunk
+            assert_eq!(total_clipped_samples, 5); // Cumulative
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+        assert_eq!(monitor.total_clipped(), 5);
+    }
+
+    #[test]
+    fn test_quality_monitor_dc_offset_zero_for_centered() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+        // Balanced positive and negative
+        let samples = vec![1000i16, -1000, 500, -500];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport { dc_offset, .. } = event {
+            assert!(dc_offset.abs() < 0.001);
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
+
+    #[test]
+    fn test_quality_monitor_dc_offset_positive_bias() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+        // All positive samples at half max
+        let half_max = i16::MAX / 2;
+        let samples = vec![half_max; 100];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport { dc_offset, .. } = event {
+            assert!((dc_offset - 0.5).abs() < 0.01);
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
+
+    #[test]
+    fn test_quality_monitor_dc_offset_negative_bias() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+        let half_min = i16::MIN / 2;
+        let samples = vec![half_min; 100];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport { dc_offset, .. } = event {
+            assert!((dc_offset - (-0.5)).abs() < 0.01);
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
+
+    #[test]
+    fn test_quality_monitor_empty_chunk() {
+        let mut monitor = QualityMonitor::new(Some(SourceId::new("test")));
+        let samples: Vec<i16> = vec![];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport {
+            peak_amplitude,
+            rms_db,
+            clipped_samples,
+            dc_offset,
+            ..
+        } = event
+        {
+            assert_eq!(peak_amplitude, 0);
+            assert_eq!(rms_db, SILENCE_FLOOR_DB);
+            assert_eq!(clipped_samples, 0);
+            assert_eq!(dc_offset, 0.0);
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
+
+    #[test]
+    fn test_quality_monitor_without_source_id_uses_default() {
+        let mut monitor = QualityMonitor::new(None);
+        let samples = vec![100i16; 10];
+        let event = monitor.analyze_chunk(&samples, Duration::ZERO);
+        if let StreamEvent::AudioQualityReport { source_id, .. } = event {
+            assert_eq!(source_id.as_str(), "default");
+        } else {
+            panic!("Expected AudioQualityReport");
+        }
+    }
 }

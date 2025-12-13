@@ -303,4 +303,169 @@ mod tests {
         assert_eq!(data[WAV_HEADER_SIZE + 2], 0x78); // Low byte of 0x5678
         assert_eq!(data[WAV_HEADER_SIZE + 3], 0x56); // High byte of 0x5678
     }
+
+    #[tokio::test]
+    async fn test_file_sink_invalid_path_error() {
+        // Try to write to a nonexistent directory
+        let path = PathBuf::from("/nonexistent/directory/test.wav");
+        let sink = FileSink::wav(&path);
+        sink.on_start().await.unwrap(); // on_start doesn't create file
+
+        let chunk = AudioChunk::new(vec![100, 200], Duration::ZERO, 16000, 1);
+        let result = sink.write(&chunk).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("nonexistent"));
+    }
+
+    #[tokio::test]
+    async fn test_file_sink_flush_before_write() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.wav");
+
+        let sink = FileSink::wav(&path);
+        sink.on_start().await.unwrap();
+
+        // Flush before any write should succeed (no-op)
+        let result = sink.flush().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_file_sink_flush_after_write() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.wav");
+
+        let sink = FileSink::wav(&path);
+        sink.on_start().await.unwrap();
+
+        let chunk = AudioChunk::new(vec![100, 200, 300], Duration::ZERO, 16000, 1);
+        sink.write(&chunk).await.unwrap();
+
+        // Flush should succeed and ensure data is written to disk
+        let result = sink.flush().await;
+        assert!(result.is_ok());
+
+        // File should exist after flush
+        assert!(path.exists());
+
+        sink.on_stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_file_sink_on_stop_before_write() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.wav");
+
+        let sink = FileSink::wav(&path);
+        sink.on_start().await.unwrap();
+
+        // Stop without writing anything - should not create file
+        let result = sink.on_stop().await;
+        assert!(result.is_ok());
+
+        // File should NOT exist (no data was written)
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_file_sink_multiple_chunks_correct_header() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.wav");
+
+        let sink = FileSink::wav(&path);
+        sink.on_start().await.unwrap();
+
+        // Write multiple chunks
+        let chunk1 = AudioChunk::new(vec![100, 200], Duration::ZERO, 16000, 1);
+        let chunk2 = AudioChunk::new(vec![300, 400], Duration::from_millis(100), 16000, 1);
+        let chunk3 = AudioChunk::new(vec![500, 600], Duration::from_millis(200), 16000, 1);
+
+        sink.write(&chunk1).await.unwrap();
+        sink.write(&chunk2).await.unwrap();
+        sink.write(&chunk3).await.unwrap();
+
+        sink.on_stop().await.unwrap();
+
+        // Read file and verify header has correct data size
+        let data = std::fs::read(&path).unwrap();
+
+        // Total samples: 6, each 2 bytes = 12 bytes of audio data
+        // Data size is at offset 40 (little-endian u32)
+        let data_size = u32::from_le_bytes([data[40], data[41], data[42], data[43]]);
+        assert_eq!(data_size, 12); // 6 samples * 2 bytes
+
+        // File size (at offset 4) should be header_size - 8 + data_size
+        let file_size = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+        assert_eq!(file_size, WAV_HEADER_SIZE as u32 - 8 + 12);
+    }
+
+    #[tokio::test]
+    async fn test_file_sink_stereo_wav_header() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("stereo.wav");
+
+        let sink = FileSink::wav(&path);
+        sink.on_start().await.unwrap();
+
+        // Write stereo audio (interleaved L,R,L,R)
+        let chunk = AudioChunk::new(vec![100, 200, 300, 400], Duration::ZERO, 44100, 2);
+        sink.write(&chunk).await.unwrap();
+
+        sink.on_stop().await.unwrap();
+
+        let data = std::fs::read(&path).unwrap();
+
+        // Channels at offset 22 (u16 LE)
+        let channels = u16::from_le_bytes([data[22], data[23]]);
+        assert_eq!(channels, 2);
+
+        // Sample rate at offset 24 (u32 LE)
+        let sample_rate = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+        assert_eq!(sample_rate, 44100);
+
+        // Byte rate at offset 28 (u32 LE) = sample_rate * channels * bytes_per_sample
+        let byte_rate = u32::from_le_bytes([data[28], data[29], data[30], data[31]]);
+        assert_eq!(byte_rate, 44100 * 2 * 2); // 44100 Hz * 2 channels * 2 bytes
+
+        // Block align at offset 32 (u16 LE) = channels * bytes_per_sample
+        let block_align = u16::from_le_bytes([data[32], data[33]]);
+        assert_eq!(block_align, 4); // 2 channels * 2 bytes
+    }
+
+    #[tokio::test]
+    async fn test_file_sink_different_sample_rates() {
+        let dir = tempdir().unwrap();
+
+        // Test 48kHz
+        let path_48k = dir.path().join("48k.wav");
+        let sink_48k = FileSink::wav(&path_48k);
+        sink_48k.on_start().await.unwrap();
+        let chunk = AudioChunk::new(vec![100, 200], Duration::ZERO, 48000, 1);
+        sink_48k.write(&chunk).await.unwrap();
+        sink_48k.on_stop().await.unwrap();
+
+        let data = std::fs::read(&path_48k).unwrap();
+        let sample_rate = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+        assert_eq!(sample_rate, 48000);
+
+        // Test 8kHz
+        let path_8k = dir.path().join("8k.wav");
+        let sink_8k = FileSink::wav(&path_8k);
+        sink_8k.on_start().await.unwrap();
+        let chunk = AudioChunk::new(vec![100, 200], Duration::ZERO, 8000, 1);
+        sink_8k.write(&chunk).await.unwrap();
+        sink_8k.on_stop().await.unwrap();
+
+        let data = std::fs::read(&path_8k).unwrap();
+        let sample_rate = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+        assert_eq!(sample_rate, 8000);
+    }
+
+    #[test]
+    fn test_file_sink_name() {
+        let sink = FileSink::wav("/path/to/audio.wav");
+        assert_eq!(sink.name(), "file:/path/to/audio.wav");
+    }
 }

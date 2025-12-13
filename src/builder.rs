@@ -388,8 +388,13 @@ impl StreamAudioBuilder {
         chunk_tx: &mpsc::Sender<crate::chunk::AudioChunk>,
         state: &Arc<SessionState>,
         session_start: std::time::Instant,
-    ) -> Result<(Vec<tokio::task::JoinHandle<()>>, Vec<crate::source::CaptureStream>), StreamAudioError>
-    {
+    ) -> Result<
+        (
+            Vec<tokio::task::JoinHandle<()>>,
+            Vec<crate::source::CaptureStream>,
+        ),
+        StreamAudioError,
+    > {
         let (regular_sources, system_audio_sources): (Vec<_>, Vec<_>) = self
             .sources
             .iter()
