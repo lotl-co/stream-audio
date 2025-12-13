@@ -4,12 +4,41 @@
 //! - Sample format conversion (f32 ↔ i16)
 //! - Channel conversion (stereo ↔ mono)
 //! - Sample rate conversion (resampling)
+//!
+//! Most functions have two variants:
+//! - `try_*` versions that return `Result<T, FormatError>` for applications that need to handle errors gracefully
+//! - Convenience wrappers that panic on invalid input with clear error messages
 
 mod convert;
 mod resample;
 
-pub use convert::{f32_to_i16, i16_to_f32, mono_to_stereo, stereo_to_mono};
-pub use resample::{resample, resample_stereo};
+pub use convert::{f32_to_i16, i16_to_f32, mono_to_stereo, stereo_to_mono, try_stereo_to_mono};
+pub use resample::{resample, resample_stereo, try_resample, try_resample_stereo};
+
+/// Errors from format conversion operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FormatError {
+    /// Stereo operations require even number of samples (left/right pairs).
+    OddSampleCount {
+        /// The invalid sample count that was provided.
+        count: usize,
+    },
+    /// Sample rate must be greater than zero.
+    ZeroSampleRate,
+}
+
+impl std::fmt::Display for FormatError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OddSampleCount { count } => {
+                write!(f, "stereo operation requires even samples, got {count}")
+            }
+            Self::ZeroSampleRate => write!(f, "sample rate must be > 0"),
+        }
+    }
+}
+
+impl std::error::Error for FormatError {}
 
 /// Converts audio between formats (resampling + channel conversion).
 ///

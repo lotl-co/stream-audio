@@ -1,5 +1,7 @@
 //! Sample format and channel conversion.
 
+use super::FormatError;
+
 /// Maximum positive value for symmetric i16 scaling.
 ///
 /// We use 32767 (not 32768) so that -1.0 and +1.0 map to values with equal magnitude.
@@ -20,12 +22,15 @@ const I16_MAX_F32: f32 = i16::MAX as f32; // 32767.0
 /// Converts f32 samples to i16.
 ///
 /// Input should be in the range [-1.0, 1.0].
-/// Values outside this range are clamped.
+/// Values outside this range are clamped. NaN values return 0.
 ///
 /// Uses symmetric scaling so -1.0 maps to -32767 rather than -32768,
 /// losing 1 LSB at the negative extreme. This avoids asymmetric clipping.
 #[inline]
 pub fn f32_to_i16(sample: f32) -> i16 {
+    if sample.is_nan() {
+        return 0;
+    }
     (sample * I16_MAX_SYMMETRIC).clamp(I16_MIN_F32, I16_MAX_F32) as i16
 }
 
@@ -37,12 +42,20 @@ pub fn i16_to_f32(sample: i16) -> f32 {
     f32::from(sample) / I16_RANGE
 }
 
-/// Converts stereo samples to mono by averaging channels.
+/// Converts stereo samples to mono by averaging channels (checked version).
 ///
-/// Input must have an even number of samples (left, right pairs).
-/// Returns a vector half the size of the input.
-pub fn stereo_to_mono(stereo: &[i16]) -> Vec<i16> {
-    stereo
+/// Returns `Err(FormatError::OddSampleCount)` if input has odd number of samples.
+/// Returns a vector half the size of the input on success.
+///
+/// Use this version when your application needs to handle errors gracefully
+/// rather than panicking on invalid input.
+pub fn try_stereo_to_mono(stereo: &[i16]) -> Result<Vec<i16>, FormatError> {
+    if stereo.len() % 2 != 0 {
+        return Err(FormatError::OddSampleCount {
+            count: stereo.len(),
+        });
+    }
+    Ok(stereo
         .chunks_exact(2)
         .map(|pair| {
             // Average the two channels, avoiding overflow
@@ -50,7 +63,19 @@ pub fn stereo_to_mono(stereo: &[i16]) -> Vec<i16> {
             let right = i32::from(pair[1]);
             ((left + right) / 2) as i16
         })
-        .collect()
+        .collect())
+}
+
+/// Converts stereo samples to mono by averaging channels.
+///
+/// # Panics
+///
+/// Panics if input has odd number of samples (not valid stereo pairs).
+///
+/// For a non-panicking version, use [`try_stereo_to_mono`].
+#[allow(clippy::expect_used)] // Intentional panic on invalid input
+pub fn stereo_to_mono(stereo: &[i16]) -> Vec<i16> {
+    try_stereo_to_mono(stereo).expect("stereo_to_mono requires even number of samples")
 }
 
 /// Converts mono samples to stereo by duplicating each sample.
@@ -145,13 +170,9 @@ mod tests {
 
     #[test]
     fn test_f32_to_i16_nan() {
-        // NaN behavior: clamp produces NaN, cast to i16 is implementation-defined
-        // This test documents current behavior (may vary by platform)
+        // NaN should return 0 (defined behavior)
         let result = f32_to_i16(f32::NAN);
-        // NaN comparisons are always false, so clamp returns NaN
-        // Casting NaN to i16 is UB in older Rust, but modern Rust saturates to 0
-        // Just verify it doesn't panic and produces some i16 value
-        let _ = result; // Compiles and runs without panic
+        assert_eq!(result, 0);
     }
 
     #[test]
@@ -177,22 +198,41 @@ mod tests {
     }
 
     #[test]
-    fn test_stereo_to_mono_odd_samples() {
-        // Odd number of samples: chunks_exact ignores the remainder (lossy!)
-        // This is a bug - the last sample is silently dropped
+    fn test_stereo_to_mono_odd_samples_returns_error() {
+        // Odd number of samples should return an error
         let odd_samples = vec![100i16, 200, 300];
-        let result = stereo_to_mono(&odd_samples);
-        // Only processes first 2 samples, third is lost
-        assert_eq!(result, vec![150]);
+        let result = try_stereo_to_mono(&odd_samples);
+        assert_eq!(
+            result,
+            Err(crate::format::FormatError::OddSampleCount { count: 3 })
+        );
     }
 
     #[test]
-    fn test_stereo_to_mono_single_sample() {
-        // Single sample: chunks_exact yields nothing (lossy!)
-        // This is a bug - input is silently dropped
+    #[should_panic(expected = "even number of samples")]
+    fn test_stereo_to_mono_odd_samples_panics() {
+        // Verify the panicking wrapper works correctly
+        let odd_samples = vec![100i16, 200, 300];
+        stereo_to_mono(&odd_samples);
+    }
+
+    #[test]
+    fn test_stereo_to_mono_single_sample_returns_error() {
+        // Single sample should return an error
         let single = vec![100i16];
-        let result = stereo_to_mono(&single);
-        assert!(result.is_empty()); // Sample is lost!
+        let result = try_stereo_to_mono(&single);
+        assert_eq!(
+            result,
+            Err(crate::format::FormatError::OddSampleCount { count: 1 })
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "even number of samples")]
+    fn test_stereo_to_mono_single_sample_panics() {
+        // Verify the panicking wrapper works correctly
+        let single = vec![100i16];
+        stereo_to_mono(&single);
     }
 
     #[test]

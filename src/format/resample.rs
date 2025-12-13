@@ -3,23 +3,30 @@
 //! This module provides basic resampling using linear interpolation.
 //! For higher quality, consider using a dedicated resampling crate.
 
-/// Resamples audio from one sample rate to another.
+use super::FormatError;
+
+/// Resamples audio from one sample rate to another (checked version).
 ///
 /// Uses linear interpolation, which is fast but may introduce artifacts
 /// for large rate changes. Suitable for speech/transcription use cases.
 ///
+/// Returns `Err(FormatError::ZeroSampleRate)` if `from_rate` is zero.
+///
 /// # Arguments
 ///
 /// * `samples` - Input samples (mono)
-/// * `from_rate` - Source sample rate in Hz
+/// * `from_rate` - Source sample rate in Hz (must be > 0)
 /// * `to_rate` - Target sample rate in Hz
-///
-/// # Returns
-///
-/// Resampled audio data.
-pub fn resample(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
+pub fn try_resample(
+    samples: &[i16],
+    from_rate: u32,
+    to_rate: u32,
+) -> Result<Vec<i16>, FormatError> {
+    if from_rate == 0 {
+        return Err(FormatError::ZeroSampleRate);
+    }
     if from_rate == to_rate || samples.is_empty() {
-        return samples.to_vec();
+        return Ok(samples.to_vec());
     }
 
     let ratio = f64::from(to_rate) / f64::from(from_rate);
@@ -47,15 +54,45 @@ pub fn resample(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
         output.push(sample);
     }
 
-    output
+    Ok(output)
 }
 
-/// Resamples stereo audio.
+/// Resamples audio from one sample rate to another.
+///
+/// Uses linear interpolation, which is fast but may introduce artifacts
+/// for large rate changes. Suitable for speech/transcription use cases.
+///
+/// # Panics
+///
+/// Panics if `from_rate` is zero.
+///
+/// For a non-panicking version, use [`try_resample`].
+#[allow(clippy::expect_used)] // Intentional panic on invalid input
+pub fn resample(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
+    try_resample(samples, from_rate, to_rate).expect("resample requires from_rate > 0")
+}
+
+/// Resamples stereo audio (checked version).
 ///
 /// Processes left and right channels separately.
-pub fn resample_stereo(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
+///
+/// Returns `Err(FormatError::OddSampleCount)` if input has odd number of samples.
+/// Returns `Err(FormatError::ZeroSampleRate)` if `from_rate` is zero.
+pub fn try_resample_stereo(
+    samples: &[i16],
+    from_rate: u32,
+    to_rate: u32,
+) -> Result<Vec<i16>, FormatError> {
+    if samples.len() % 2 != 0 {
+        return Err(FormatError::OddSampleCount {
+            count: samples.len(),
+        });
+    }
+    if from_rate == 0 {
+        return Err(FormatError::ZeroSampleRate);
+    }
     if from_rate == to_rate || samples.is_empty() {
-        return samples.to_vec();
+        return Ok(samples.to_vec());
     }
 
     // Deinterleave
@@ -67,9 +104,9 @@ pub fn resample_stereo(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16
         right.push(chunk[1]);
     }
 
-    // Resample each channel
-    let left_resampled = resample(&left, from_rate, to_rate);
-    let right_resampled = resample(&right, from_rate, to_rate);
+    // Resample each channel (from_rate is validated above, so unwrap is safe)
+    let left_resampled = try_resample(&left, from_rate, to_rate)?;
+    let right_resampled = try_resample(&right, from_rate, to_rate)?;
 
     // Interleave
     let mut output = Vec::with_capacity(left_resampled.len() * 2);
@@ -78,7 +115,22 @@ pub fn resample_stereo(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16
         output.push(r);
     }
 
-    output
+    Ok(output)
+}
+
+/// Resamples stereo audio.
+///
+/// Processes left and right channels separately.
+///
+/// # Panics
+///
+/// Panics if input has odd number of samples or if `from_rate` is zero.
+///
+/// For a non-panicking version, use [`try_resample_stereo`].
+#[allow(clippy::expect_used)] // Intentional panic on invalid input
+pub fn resample_stereo(samples: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
+    try_resample_stereo(samples, from_rate, to_rate)
+        .expect("resample_stereo requires even samples and from_rate > 0")
 }
 
 #[cfg(test)]
@@ -164,14 +216,19 @@ mod tests {
     }
 
     #[test]
-    fn test_resample_zero_from_rate() {
-        // from_rate=0 causes division by zero → infinity ratio
-        // This results in a massive output (may OOM or hang)
-        // We just document this is undefined behavior
-        // let _samples = vec![100i16];
-        // let _result = resample(&_samples, 0, 16000);
-        // Would produce output_len = (1 * inf).ceil() which overflows
-        // TEST INTENTIONALLY LEFT EMPTY - documents UB
+    fn test_resample_zero_from_rate_returns_error() {
+        // from_rate=0 should return an error
+        let samples = vec![100i16];
+        let result = try_resample(&samples, 0, 16000);
+        assert_eq!(result, Err(crate::format::FormatError::ZeroSampleRate));
+    }
+
+    #[test]
+    #[should_panic(expected = "from_rate > 0")]
+    fn test_resample_zero_from_rate_panics() {
+        // Verify the panicking wrapper works correctly
+        let samples = vec![100i16];
+        resample(&samples, 0, 16000);
     }
 
     #[test]
@@ -201,33 +258,60 @@ mod tests {
     }
 
     #[test]
-    fn test_resample_stereo_odd_samples() {
-        // Odd number of stereo samples with actual resampling
-        // chunks_exact ignores remainder (lossy!)
+    fn test_resample_stereo_odd_samples_returns_error() {
+        // Odd number of stereo samples should return an error
         let odd_stereo = vec![100i16, 200, 300]; // 1.5 frames
-                                                 // Force actual resampling (not same-rate early return)
-        let result = resample_stereo(&odd_stereo, 16000, 32000);
-        // Only first complete frame (2 samples) is deinterleaved and processed
-        // Third sample is lost, then result is upsampled and reinterleaved
-        assert_eq!(result.len() % 2, 0); // Should be even (stereo pairs)
+        let result = try_resample_stereo(&odd_stereo, 16000, 32000);
+        assert_eq!(
+            result,
+            Err(crate::format::FormatError::OddSampleCount { count: 3 })
+        );
     }
 
     #[test]
-    fn test_resample_stereo_single_sample() {
-        // Single sample with actual resampling: no complete stereo frames
+    #[should_panic(expected = "even samples")]
+    fn test_resample_stereo_odd_samples_panics() {
+        // Verify the panicking wrapper works correctly
+        let odd_stereo = vec![100i16, 200, 300];
+        resample_stereo(&odd_stereo, 16000, 32000);
+    }
+
+    #[test]
+    fn test_resample_stereo_single_sample_returns_error() {
+        // Single sample should return an error
         let single = vec![100i16];
-        // Force actual resampling (not same-rate early return)
-        let result = resample_stereo(&single, 16000, 32000);
-        assert!(result.is_empty()); // Sample is lost!
+        let result = try_resample_stereo(&single, 16000, 32000);
+        assert_eq!(
+            result,
+            Err(crate::format::FormatError::OddSampleCount { count: 1 })
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "even samples")]
+    fn test_resample_stereo_single_sample_panics() {
+        // Verify the panicking wrapper works correctly
+        let single = vec![100i16];
+        resample_stereo(&single, 16000, 32000);
+    }
+
+    #[test]
+    fn test_resample_stereo_same_rate_odd_returns_error() {
+        // Even same-rate passthrough should check for odd samples now
+        let odd_stereo = vec![100i16, 200, 300];
+        let result = try_resample_stereo(&odd_stereo, 16000, 16000);
+        assert_eq!(
+            result,
+            Err(crate::format::FormatError::OddSampleCount { count: 3 })
+        );
     }
 
     #[test]
     fn test_resample_stereo_same_rate_passthrough() {
-        // Same rate: early return bypasses deinterleaving, preserves all samples
-        let odd_stereo = vec![100i16, 200, 300];
-        let result = resample_stereo(&odd_stereo, 16000, 16000);
-        // Early return means no loss - all samples preserved (even if odd)
-        assert_eq!(result, vec![100, 200, 300]);
+        // Same rate with valid even samples should passthrough
+        let stereo = vec![100i16, 200, 300, 400];
+        let result = resample_stereo(&stereo, 16000, 16000);
+        assert_eq!(result, vec![100, 200, 300, 400]);
     }
 
     #[test]
