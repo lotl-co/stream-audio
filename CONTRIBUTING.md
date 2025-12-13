@@ -209,6 +209,55 @@ cargo run --example simple
 AUDIO_DEVICE="Built-in Microphone" cargo run --example simple
 ```
 
+### System Audio Tests (macOS)
+
+System audio tests automatically detect if they can run on your machine. They check:
+
+1. **Feature flag**: `sck-native` feature must be enabled
+2. **Platform**: Must be macOS
+3. **CI detection**: Auto-skip in CI environments (GitHub Actions, Jenkins, etc.)
+4. **Permissions**: Screen Recording permission must be granted
+
+**Running system audio tests:**
+
+```bash
+# Run all tests with system audio support (auto-skips if unavailable)
+just test-all
+
+# Run only system audio tests with output
+just test-system-audio
+
+# Check if your machine can run system audio tests
+just check-system-audio-support
+
+# Run with verbose debug output
+just test-system-audio-verbose
+```
+
+**Expected output when tests can run:**
+```
+running 6 tests
+test test_system_audio_backend_creation ... ok
+test test_system_audio_native_config ... ok
+test test_system_audio_start_stop ... ok
+test test_system_audio_multiple_cycles ... ok
+test test_system_audio_receives_samples ... ok
+test test_system_audio_builder_integration ... ok
+```
+
+**Expected output when tests skip (CI or no permission):**
+```
+[SKIP] running in CI environment (no display/permissions)
+[SKIP] Screen Recording permission not granted (check System Settings)
+```
+
+**Granting Screen Recording permission:**
+
+1. Run any system audio test or example once to trigger the permission prompt
+2. Open **System Settings > Privacy & Security > Screen Recording**
+3. Enable the toggle for your terminal app (Terminal, iTerm2, VS Code, etc.)
+4. Restart your terminal and try again
+
 ### Debugging System Audio (macOS)
 
 The native ScreenCaptureKit backend (`sck-native` feature) includes debug logging that can help diagnose audio capture issues.

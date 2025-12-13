@@ -1,7 +1,7 @@
 //! System audio capture backend for macOS.
 //!
 //! This module provides system audio capture (speaker/output audio) via
-//! ScreenCaptureKit on macOS 13+. Uses a custom Swift library with C FFI
+//! `ScreenCaptureKit` on macOS 13+. Uses a custom Swift library with C FFI
 //! for reliable, debuggable audio capture.
 //!
 //! # Requirements
@@ -25,6 +25,8 @@ mod sck_native;
 
 #[cfg(test)]
 pub mod mock;
+
+pub mod test_support;
 
 use ringbuf::HeapCons;
 

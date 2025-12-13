@@ -28,7 +28,7 @@ pub(crate) enum DeviceSelection {
     SystemDefault,
     /// Use a specific device by name.
     ByName(String),
-    /// Capture system audio output via ScreenCaptureKit.
+    /// Capture system audio output via `ScreenCaptureKit`.
     /// Requires the `sck-native` feature on macOS.
     #[cfg(all(target_os = "macos", feature = "sck-native"))]
     SystemAudio,

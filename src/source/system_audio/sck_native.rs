@@ -1,7 +1,7 @@
-//! Native ScreenCaptureKit backend via Swift FFI.
+//! Native `ScreenCaptureKit` backend via Swift FFI.
 //!
 //! This module provides system audio capture on macOS 13+ using a custom Swift
-//! library that wraps ScreenCaptureKit. The Swift code is compiled separately
+//! library that wraps `ScreenCaptureKit`. The Swift code is compiled separately
 //! and linked as a dynamic library.
 //!
 //! # Thread Safety
@@ -36,7 +36,7 @@ struct SCKAudioSessionRef(*mut c_void);
 // Safety: The session is managed by Swift and we only pass it through FFI
 unsafe impl Send for SCKAudioSessionRef {}
 
-/// Error codes from Swift (must match SCKError in Swift)
+/// Error codes from Swift (must match `SCKError` in Swift)
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SCKError {
@@ -55,16 +55,16 @@ impl SCKError {
             0 => Self::Ok,
             1 => Self::PermissionDenied,
             2 => Self::NoDisplays,
-            3 => Self::CaptureFailed,
             4 => Self::AlreadyRunning,
             5 => Self::NotRunning,
             6 => Self::InvalidSession,
+            // 3 and any unknown values map to CaptureFailed
             _ => Self::CaptureFailed,
         }
     }
 }
 
-/// Audio callback type matching Swift's SCKAudioCallback
+/// Audio callback type matching Swift's `SCKAudioCallback`
 type SCKAudioCallback = unsafe extern "C" fn(
     context: *mut c_void,
     samples: *const f32,
@@ -111,8 +111,8 @@ fn buffer_capacity() -> usize {
 
 /// Context passed to the Swift callback
 struct CallbackContext {
-    /// Producer is None until start_capture() is called.
-    /// Uses parking_lot::Mutex for faster, non-poisoning locks in the audio callback path.
+    /// Producer is None until `start_capture()` is called.
+    /// Uses `parking_lot::Mutex` for faster, non-poisoning locks in the audio callback path.
     producer: Mutex<Option<HeapProd<i16>>>,
     overflow_count: AtomicU64,
     is_active: AtomicBool,
@@ -165,7 +165,7 @@ unsafe extern "C" fn audio_callback(
 
 // MARK: - Backend Implementation
 
-/// Native ScreenCaptureKit backend for macOS system audio capture.
+/// Native `ScreenCaptureKit` backend for macOS system audio capture.
 pub struct SCKNativeBackend {
     session: SCKAudioSessionRef,
     /// The context used by callbacks. We keep an Arc for Rust-side access.
@@ -183,7 +183,7 @@ pub struct SCKNativeBackend {
 unsafe impl Send for SCKNativeBackend {}
 
 impl SCKNativeBackend {
-    /// Create a new native ScreenCaptureKit backend.
+    /// Create a new native `ScreenCaptureKit` backend.
     ///
     /// # Errors
     ///

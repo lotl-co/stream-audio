@@ -247,3 +247,204 @@ async fn test_real_capture() {
         assert!(samples > 0, "Should have captured some audio");
     }
 }
+
+// ============================================================================
+// System Audio Tests (macOS only, auto-skip when not available)
+// ============================================================================
+
+/// Checks if system audio tests can run and skips if not.
+/// Returns true if the test should continue, false if it should skip.
+#[cfg(all(target_os = "macos", feature = "sck-native"))]
+fn check_system_audio_support() -> bool {
+    use stream_audio::source::system_audio::test_support::can_run_system_audio_tests;
+    let support = can_run_system_audio_tests();
+    if support.should_skip() {
+        eprintln!("[SKIP] {}", support.reason);
+        return false;
+    }
+    true
+}
+
+#[cfg(not(all(target_os = "macos", feature = "sck-native")))]
+fn check_system_audio_support() -> bool {
+    eprintln!("[SKIP] sck-native feature not enabled or not macOS");
+    false
+}
+
+/// Tests that the system audio backend can be created successfully.
+#[test]
+fn test_system_audio_backend_creation() {
+    if !check_system_audio_support() {
+        return;
+    }
+
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
+    {
+        use stream_audio::source::system_audio::create_system_audio_backend;
+
+        let backend = create_system_audio_backend();
+        assert!(
+            backend.is_ok(),
+            "Backend creation failed: {:?}",
+            backend.err()
+        );
+
+        let backend = backend.unwrap();
+        assert_eq!(backend.name(), "SCKNative");
+    }
+}
+
+/// Tests that native_config returns expected values.
+#[test]
+fn test_system_audio_native_config() {
+    if !check_system_audio_support() {
+        return;
+    }
+
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
+    {
+        use stream_audio::source::system_audio::create_system_audio_backend;
+
+        let backend = create_system_audio_backend().unwrap();
+        let (sample_rate, channels) = backend.native_config();
+
+        // ScreenCaptureKit uses 48kHz stereo
+        assert_eq!(sample_rate, 48000, "Expected 48kHz sample rate");
+        assert_eq!(channels, 2, "Expected stereo (2 channels)");
+    }
+}
+
+/// Tests that capture can start and stop cleanly.
+#[test]
+fn test_system_audio_start_stop() {
+    if !check_system_audio_support() {
+        return;
+    }
+
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
+    {
+        use stream_audio::source::system_audio::create_system_audio_backend;
+
+        let backend = create_system_audio_backend().unwrap();
+        let result = backend.start_capture();
+
+        assert!(result.is_ok(), "start_capture failed: {:?}", result.err());
+
+        let (stream, _consumer) = result.unwrap();
+        // Dropping the stream should stop capture cleanly
+        drop(stream);
+    }
+}
+
+/// Tests multiple start/stop cycles to catch resource leaks.
+#[test]
+fn test_system_audio_multiple_cycles() {
+    if !check_system_audio_support() {
+        return;
+    }
+
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
+    {
+        use stream_audio::source::system_audio::create_system_audio_backend;
+
+        for i in 0..3 {
+            let backend = create_system_audio_backend()
+                .unwrap_or_else(|e| panic!("Cycle {}: backend creation failed: {:?}", i, e));
+
+            let (stream, _consumer) = backend
+                .start_capture()
+                .unwrap_or_else(|e| panic!("Cycle {}: start_capture failed: {:?}", i, e));
+
+            // Brief pause to ensure capture is running
+            std::thread::sleep(Duration::from_millis(50));
+
+            drop(stream);
+
+            // Brief pause between cycles
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+}
+
+/// Tests that the ring buffer receives samples when audio is playing.
+/// Note: This test may not receive samples if no system audio is playing.
+#[test]
+fn test_system_audio_receives_samples() {
+    if !check_system_audio_support() {
+        return;
+    }
+
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
+    {
+        use ringbuf::traits::{Consumer, Observer};
+        use stream_audio::source::system_audio::create_system_audio_backend;
+
+        let backend = create_system_audio_backend().unwrap();
+        let (_stream, mut consumer) = backend.start_capture().unwrap();
+
+        // Wait a bit for audio callbacks to fire
+        std::thread::sleep(Duration::from_millis(200));
+
+        // Check if we received any samples
+        let available = consumer.occupied_len();
+
+        // We don't assert > 0 because there might be no audio playing
+        // Instead, we just verify the consumer is functional
+        println!("System audio test: received {} samples in 200ms", available);
+
+        // Try to pop some samples to verify the ring buffer works
+        let mut count = 0;
+        while consumer.try_pop().is_some() && count < 1000 {
+            count += 1;
+        }
+        println!("Successfully popped {} samples", count);
+    }
+}
+
+/// Integration test: system audio with full StreamAudio builder API.
+#[tokio::test]
+async fn test_system_audio_builder_integration() {
+    if !check_system_audio_support() {
+        return;
+    }
+
+    #[cfg(all(target_os = "macos", feature = "sck-native"))]
+    {
+        use stream_audio::{AudioSource, FormatPreset, StreamAudio};
+
+        let (tx, mut rx) = mpsc::channel::<AudioChunk>(100);
+
+        let session = StreamAudio::builder()
+            .add_source("system", AudioSource::system_audio())
+            .format(FormatPreset::Transcription) // Resamples 48kHz stereo -> 16kHz mono
+            .add_sink(ChannelSink::new(tx))
+            .start()
+            .await;
+
+        assert!(session.is_ok(), "Session start failed: {:?}", session.err());
+        let session = session.unwrap();
+
+        // Wait briefly for capture to produce chunks
+        let timeout_result = tokio::time::timeout(Duration::from_millis(500), async {
+            let mut chunks_received = 0;
+            while let Some(chunk) = rx.recv().await {
+                chunks_received += 1;
+                // Verify format conversion happened
+                assert_eq!(chunk.sample_rate, 16000, "Expected 16kHz after resampling");
+                assert_eq!(chunk.channels, 1, "Expected mono after conversion");
+                if chunks_received >= 2 {
+                    break;
+                }
+            }
+            chunks_received
+        })
+        .await;
+
+        session.stop().await.expect("Failed to stop session");
+
+        match timeout_result {
+            Ok(chunks) => println!("Received {} chunks from system audio", chunks),
+            Err(_) => println!("Timeout waiting for chunks (this is OK if no audio is playing)"),
+        }
+    }
+}
