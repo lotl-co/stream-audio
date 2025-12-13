@@ -39,34 +39,6 @@ pub const DEFAULT_SYSTEM_AUDIO_SAMPLE_RATE: u32 = 48000;
 /// Default channel count for system audio capture (stereo).
 pub const DEFAULT_SYSTEM_AUDIO_CHANNELS: u16 = 2;
 
-// ============================================================================
-// Runtime Events
-// ============================================================================
-
-/// Runtime events from system audio capture.
-///
-/// These events indicate state changes or issues that don't prevent capture
-/// but may affect audio quality or availability.
-#[derive(Debug, Clone)]
-pub enum SystemAudioEvent {
-    /// Default audio output device changed.
-    /// Audio routing may have changed; consider restarting capture.
-    OutputDeviceChanged,
-
-    /// Capture may be degraded due to OS restrictions or errors.
-    CaptureDegraded {
-        /// Description of the degradation.
-        reason: String,
-    },
-
-    /// Ring buffer overrun - consumer couldn't keep up with producer.
-    /// Some audio frames were dropped.
-    Overflow {
-        /// Number of frames dropped.
-        dropped_frames: u64,
-    },
-}
-
 /// Backend for capturing system audio.
 ///
 /// Implementations provide platform-specific system audio capture,
@@ -87,12 +59,6 @@ pub trait SystemAudioBackend: Send {
 
     /// Backend name for logging/debugging.
     fn name(&self) -> &'static str;
-
-    /// Returns and drains any pending events since the last call.
-    /// Non-blocking, safe to call from any thread.
-    fn poll_events(&self) -> Vec<SystemAudioEvent> {
-        Vec::new()
-    }
 }
 
 /// Creates the system audio backend for the current platform.

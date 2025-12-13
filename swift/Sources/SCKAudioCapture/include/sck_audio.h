@@ -77,12 +77,6 @@ SCKError sck_audio_start(SCKAudioSessionRef session);
 /// @param session Session handle
 void sck_audio_stop(SCKAudioSessionRef session);
 
-/// Check if capture is currently running.
-///
-/// @param session Session handle
-/// @return 1 if running, 0 otherwise
-int sck_audio_is_running(SCKAudioSessionRef session);
-
 /// Get last error message for this session (for debugging).
 ///
 /// @param session Session handle

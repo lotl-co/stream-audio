@@ -106,32 +106,6 @@ fn can_run_system_audio_tests_impl() -> SystemAudioTestSupport {
     }
 }
 
-/// Macro for system audio tests that skip gracefully when conditions aren't met.
-///
-/// This reduces boilerplate for tests that require system audio support.
-///
-/// # Example
-///
-/// ```ignore
-/// system_audio_test!(test_backend_starts, {
-///     let backend = create_system_audio_backend().unwrap();
-///     assert_eq!(backend.name(), "SCKNative");
-/// });
-/// ```
-#[macro_export]
-macro_rules! system_audio_test {
-    ($name:ident, $body:expr) => {
-        #[test]
-        fn $name() {
-            let support = $crate::source::system_audio::test_support::can_run_system_audio_tests();
-            if support.skip_with_message() {
-                return;
-            }
-            $body
-        }
-    };
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

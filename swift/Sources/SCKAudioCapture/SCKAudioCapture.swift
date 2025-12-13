@@ -326,15 +326,6 @@ public func sck_audio_stop(session: UnsafeMutableRawPointer?) {
     obj.stop()
 }
 
-@_cdecl("sck_audio_is_running")
-public func sck_audio_is_running(session: UnsafeMutableRawPointer?) -> Int32 {
-    guard #available(macOS 13.0, *) else { return 0 }
-    guard let session = session else { return 0 }
-
-    let obj = Unmanaged<SCKAudioSession>.fromOpaque(session).takeUnretainedValue()
-    return obj.running ? 1 : 0
-}
-
 @_cdecl("sck_audio_session_error")
 public func sck_audio_session_error(session: UnsafeMutableRawPointer?) -> UnsafePointer<CChar>? {
     guard #available(macOS 13.0, *) else { return nil }

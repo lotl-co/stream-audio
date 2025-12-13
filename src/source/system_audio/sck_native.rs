@@ -12,14 +12,14 @@
 #![allow(unsafe_code)] // FFI requires unsafe
 
 use std::ffi::{c_char, c_void, CStr};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
 use ringbuf::traits::{Producer, Split};
 use ringbuf::{HeapCons, HeapProd, HeapRb};
 
-use super::{SystemAudioBackend, SystemAudioEvent};
+use super::SystemAudioBackend;
 use crate::format::f32_to_i16;
 use crate::source::CaptureStream;
 use crate::StreamAudioError;
@@ -81,8 +81,6 @@ extern "C" {
     fn sck_audio_destroy(session: SCKAudioSessionRef);
     fn sck_audio_start(session: SCKAudioSessionRef) -> i32;
     fn sck_audio_stop(session: SCKAudioSessionRef);
-    #[allow(dead_code)] // Available for future use
-    fn sck_audio_is_running(session: SCKAudioSessionRef) -> i32;
     fn sck_audio_session_error(session: SCKAudioSessionRef) -> *const c_char;
 
     // Audio format constants - Swift is the single source of truth
@@ -114,7 +112,6 @@ struct CallbackContext {
     /// Producer is None until `start_capture()` is called.
     /// Uses `parking_lot::Mutex` for faster, non-poisoning locks in the audio callback path.
     producer: Mutex<Option<HeapProd<i16>>>,
-    overflow_count: AtomicU64,
     is_active: AtomicBool,
 }
 
@@ -151,15 +148,9 @@ unsafe extern "C" fn audio_callback(
     // - Pre-allocating a buffer adds complexity and lock contention
     // - Current approach uses <1% of callback time budget (~30µs of 20,000µs available)
     // Verdict: simplicity and predictability outweigh micro-optimization here.
-    let mut overflow = 0u64;
     for &sample_f32 in sample_slice {
-        if producer.try_push(f32_to_i16(sample_f32)).is_err() {
-            overflow += 1;
-        }
-    }
-
-    if overflow > 0 {
-        ctx.overflow_count.fetch_add(overflow, Ordering::Relaxed);
+        // Silently drop samples if ring buffer is full - consumer couldn't keep up
+        let _ = producer.try_push(f32_to_i16(sample_f32));
     }
 }
 
@@ -196,7 +187,6 @@ impl SCKNativeBackend {
         // that would be immediately discarded
         let context = Arc::new(CallbackContext {
             producer: Mutex::new(None),
-            overflow_count: AtomicU64::new(0),
             is_active: AtomicBool::new(false),
         });
 
@@ -334,18 +324,6 @@ impl SystemAudioBackend for SCKNativeBackend {
 
     fn name(&self) -> &'static str {
         "SCKNative"
-    }
-
-    fn poll_events(&self) -> Vec<SystemAudioEvent> {
-        let overflow = self.context.overflow_count.swap(0, Ordering::Relaxed);
-
-        if overflow > 0 {
-            vec![SystemAudioEvent::Overflow {
-                dropped_frames: overflow,
-            }]
-        } else {
-            Vec::new()
-        }
     }
 }
 

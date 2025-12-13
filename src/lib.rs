@@ -83,7 +83,3 @@ pub use sink::{ChannelSink, FileSink, Sink};
 pub use source::{
     default_input_device_name, list_input_devices, AudioDevice, DeviceConfig, MockSource, SourceId,
 };
-
-// Re-export system audio types when feature is enabled
-#[cfg(feature = "sck-native")]
-pub use source::system_audio::SystemAudioEvent;
