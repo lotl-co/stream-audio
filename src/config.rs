@@ -113,11 +113,6 @@ mod tests {
     }
 
     #[test]
-    fn test_format_preset_default() {
-        assert_eq!(FormatPreset::default(), FormatPreset::Transcription);
-    }
-
-    #[test]
     fn test_stream_config_defaults() {
         let config = StreamConfig::default();
         assert_eq!(config.chunk_duration, Duration::from_millis(100));

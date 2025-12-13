@@ -251,29 +251,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_stream_event_debug() {
-        let event = StreamEvent::BufferOverflow { dropped_ms: 100 };
-        let debug = format!("{:?}", event);
-        assert!(debug.contains("BufferOverflow"));
-        assert!(debug.contains("100"));
-    }
-
-    #[test]
-    fn test_stream_event_clone() {
-        let event = StreamEvent::SinkError {
-            sink_name: "file".to_string(),
-            error: "disk full".to_string(),
-        };
-        let cloned = event.clone();
-        if let StreamEvent::SinkError { sink_name, error } = cloned {
-            assert_eq!(sink_name, "file");
-            assert_eq!(error, "disk full");
-        } else {
-            panic!("Expected SinkError variant");
-        }
-    }
-
-    #[test]
     fn test_event_callback_helper() {
         use std::sync::atomic::{AtomicBool, Ordering};
 

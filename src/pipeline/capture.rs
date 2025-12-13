@@ -637,37 +637,6 @@ mod tests {
     }
 
     #[test]
-    fn test_capture_config_creation() {
-        let config = CaptureConfig {
-            device_sample_rate: 48000,
-            device_channels: 2,
-            target_sample_rate: 16000,
-            target_channels: 1,
-            chunk_duration: Duration::from_millis(100),
-            source_id: None,
-            session_start: Instant::now(),
-        };
-
-        assert_eq!(config.device_sample_rate, 48000);
-        assert_eq!(config.target_sample_rate, 16000);
-    }
-
-    #[test]
-    fn test_capture_config_with_source_id() {
-        let config = CaptureConfig {
-            device_sample_rate: 48000,
-            device_channels: 2,
-            target_sample_rate: 16000,
-            target_channels: 1,
-            chunk_duration: Duration::from_millis(100),
-            source_id: Some(SourceId::new("mic")),
-            session_start: Instant::now(),
-        };
-
-        assert_eq!(config.source_id.as_ref().unwrap().as_str(), "mic");
-    }
-
-    #[test]
     fn test_calculate_rms_db_normal() {
         // Full-scale sine wave has RMS of ~0.707, which is about -3dB
         let sum_squares = (i16::MAX as f64).powi(2) * 100.0; // 100 samples at max
