@@ -57,10 +57,7 @@ impl FlowMonitor {
             if was_stopped {
                 // Audio resumed after being stopped
                 return Some(StreamEvent::AudioFlowResumed {
-                    source_id: self
-                        .source_id
-                        .clone()
-                        .unwrap_or_else(|| SourceId::new("default")),
+                    source_id: self.source_id.clone().unwrap_or_default(),
                 });
             }
         } else {
@@ -68,10 +65,7 @@ impl FlowMonitor {
             if self.is_flowing && silence_duration > SILENCE_THRESHOLD {
                 self.is_flowing = false;
                 return Some(StreamEvent::AudioFlowStopped {
-                    source_id: self
-                        .source_id
-                        .clone()
-                        .unwrap_or_else(|| SourceId::new("default")),
+                    source_id: self.source_id.clone().unwrap_or_default(),
                     silent_duration_ms: silence_duration.as_millis() as u64,
                 });
             }
@@ -180,10 +174,7 @@ impl GapMonitor {
         );
 
         StreamEvent::AudioGapDetected {
-            source_id: self
-                .source_id
-                .clone()
-                .unwrap_or_else(|| SourceId::new("default")),
+            source_id: self.source_id.clone().unwrap_or_default(),
             gap_duration_ms,
             gap_samples,
             position,
@@ -272,10 +263,7 @@ impl QualityMonitor {
         self.total_clipped += clipped as u64;
 
         StreamEvent::AudioQualityReport {
-            source_id: self
-                .source_id
-                .clone()
-                .unwrap_or_else(|| SourceId::new("default")),
+            source_id: self.source_id.clone().unwrap_or_default(),
             position,
             peak_amplitude: peak,
             rms_db: calculate_rms_db(sum_squares, samples.len()),
@@ -288,10 +276,7 @@ impl QualityMonitor {
     /// Returns a report for empty chunks (edge case).
     fn empty_report(&self, position: Duration) -> StreamEvent {
         StreamEvent::AudioQualityReport {
-            source_id: self
-                .source_id
-                .clone()
-                .unwrap_or_else(|| SourceId::new("default")),
+            source_id: self.source_id.clone().unwrap_or_default(),
             position,
             peak_amplitude: 0,
             rms_db: SILENCE_FLOOR_DB,

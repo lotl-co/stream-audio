@@ -12,8 +12,9 @@
 #![allow(unsafe_code)] // FFI requires unsafe
 
 use std::ffi::{c_char, c_void, CStr};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use parking_lot::Mutex;
 use ringbuf::traits::{Producer, Split};
@@ -26,6 +27,10 @@ use crate::StreamAudioError;
 
 /// Ring buffer duration in seconds
 const BUFFER_DURATION_SECS: usize = 30;
+
+/// Minimum interval between drop reports in seconds.
+/// Rate-limits logging to avoid spam when consumer is consistently slow.
+const DROP_REPORT_INTERVAL_SECS: u64 = 5;
 
 // MARK: - FFI Types
 
@@ -113,6 +118,11 @@ struct CallbackContext {
     /// Uses `parking_lot::Mutex` for faster, non-poisoning locks in the audio callback path.
     producer: Mutex<Option<HeapProd<i16>>>,
     is_active: AtomicBool,
+    /// Samples dropped since last report (buffer was full).
+    dropped_samples: AtomicU64,
+    /// Timestamp of last drop report for rate limiting.
+    /// Uses Relaxed ordering since exact timing isn't critical.
+    last_drop_report: Mutex<Option<Instant>>,
 }
 
 /// The C callback that receives audio from Swift
@@ -121,7 +131,7 @@ unsafe extern "C" fn audio_callback(
     samples: *const f32,
     frame_count: usize,
     channels: u32,
-    _sample_rate: u32,
+    sample_rate: u32,
 ) {
     if context.is_null() || samples.is_null() || frame_count == 0 {
         return;
@@ -148,9 +158,39 @@ unsafe extern "C" fn audio_callback(
     // - Pre-allocating a buffer adds complexity and lock contention
     // - Current approach uses <1% of callback time budget (~30µs of 20,000µs available)
     // Verdict: simplicity and predictability outweigh micro-optimization here.
+    let mut drops_this_callback = 0u64;
     for &sample_f32 in sample_slice {
-        // Silently drop samples if ring buffer is full - consumer couldn't keep up
-        let _ = producer.try_push(f32_to_i16(sample_f32));
+        if producer.try_push(f32_to_i16(sample_f32)).is_err() {
+            drops_this_callback += 1;
+        }
+    }
+
+    if drops_this_callback > 0 {
+        ctx.dropped_samples
+            .fetch_add(drops_this_callback, Ordering::Relaxed);
+
+        // Use try_lock to avoid blocking the audio callback
+        if let Some(mut last_report) = ctx.last_drop_report.try_lock() {
+            let should_report = match *last_report {
+                None => true,
+                Some(t) => t.elapsed().as_secs() >= DROP_REPORT_INTERVAL_SECS,
+            };
+
+            if should_report {
+                let dropped = ctx.dropped_samples.swap(0, Ordering::Relaxed);
+                *last_report = Some(Instant::now());
+
+                // Release lock before logging to minimize callback blocking
+                drop(last_report);
+
+                tracing::warn!(
+                    dropped_samples = dropped,
+                    buffer_duration_secs = BUFFER_DURATION_SECS,
+                    sample_rate,
+                    "System audio samples dropped - consumer not keeping up"
+                );
+            }
+        }
     }
 }
 
@@ -188,6 +228,8 @@ impl SCKNativeBackend {
         let context = Arc::new(CallbackContext {
             producer: Mutex::new(None),
             is_active: AtomicBool::new(false),
+            dropped_samples: AtomicU64::new(0),
+            last_drop_report: Mutex::new(None),
         });
 
         // Clone the Arc and convert to raw pointer for Swift.

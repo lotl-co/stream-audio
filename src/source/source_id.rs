@@ -62,6 +62,12 @@ impl AsRef<str> for SourceId {
     }
 }
 
+impl Default for SourceId {
+    fn default() -> Self {
+        Self::new("default")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,5 +110,11 @@ mod tests {
         set.insert(SourceId::new("mic")); // duplicate
 
         assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn test_source_id_default() {
+        let id = SourceId::default();
+        assert_eq!(id.as_str(), "default");
     }
 }

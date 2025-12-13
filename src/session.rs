@@ -71,6 +71,14 @@ impl SessionState {
 /// 3. Call [`stop()`](Session::stop) for graceful shutdown
 /// 4. Dropping the `Session` also stops capture (but prefer explicit `stop()`)
 ///
+/// # Cleanup Guarantees
+///
+/// - **`stop()`**: Guaranteed cleanup. Waits for all tasks to complete.
+/// - **`Drop`**: Best-effort only. Spawns background cleanup that may not
+///   complete if the Tokio runtime is shutting down.
+///
+/// Always call `stop()` explicitly when cleanup must be guaranteed.
+///
 /// # Example
 ///
 /// ```ignore
@@ -208,6 +216,8 @@ impl Session {
     ///
     /// This is used when the Session is dropped without explicit `stop()`.
     /// The cleanup runs in a detached task so Drop doesn't block.
+    ///
+    /// If the Tokio runtime is shutting down, cleanup is skipped with a warning.
     fn spawn_cleanup(&mut self) {
         // Signal stop
         self.state.running.store(false, Ordering::SeqCst);
@@ -219,8 +229,16 @@ impl Session {
         let capture_handles: Vec<_> = self.capture_handles.drain(..).collect();
         let router_handle = self.router_handle.take();
 
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(
+                "Session dropped after runtime shutdown; cleanup skipped. \
+                 Call stop() explicitly for guaranteed cleanup."
+            );
+            return;
+        };
+
         // Spawn a detached cleanup task
-        tokio::spawn(async move {
+        handle.spawn(async move {
             // Wait briefly for all capture tasks to finish
             for handle in capture_handles {
                 if tokio::time::timeout(SHUTDOWN_TIMEOUT, handle)
