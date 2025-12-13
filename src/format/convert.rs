@@ -140,4 +140,84 @@ mod tests {
         assert_eq!(i16_samples[2], -16383);
         assert_eq!(i16_samples[3], 32767);
     }
+
+    // ==================== Edge Case Tests ====================
+
+    #[test]
+    fn test_f32_to_i16_nan() {
+        // NaN behavior: clamp produces NaN, cast to i16 is implementation-defined
+        // This test documents current behavior (may vary by platform)
+        let result = f32_to_i16(f32::NAN);
+        // NaN comparisons are always false, so clamp returns NaN
+        // Casting NaN to i16 is UB in older Rust, but modern Rust saturates to 0
+        // Just verify it doesn't panic and produces some i16 value
+        let _ = result; // Compiles and runs without panic
+    }
+
+    #[test]
+    fn test_f32_to_i16_positive_infinity() {
+        // +Infinity * 32767 = +Infinity, clamp should return max
+        let result = f32_to_i16(f32::INFINITY);
+        assert_eq!(result, i16::MAX);
+    }
+
+    #[test]
+    fn test_f32_to_i16_negative_infinity() {
+        // -Infinity * 32767 = -Infinity, clamp should return min
+        let result = f32_to_i16(f32::NEG_INFINITY);
+        assert_eq!(result, i16::MIN);
+    }
+
+    #[test]
+    fn test_f32_to_i16_subnormal() {
+        // Very small subnormal float - should round to 0
+        let subnormal = f32::MIN_POSITIVE / 2.0; // Subnormal value
+        let result = f32_to_i16(subnormal);
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_stereo_to_mono_odd_samples() {
+        // Odd number of samples: chunks_exact ignores the remainder (lossy!)
+        // This is a bug - the last sample is silently dropped
+        let odd_samples = vec![100i16, 200, 300];
+        let result = stereo_to_mono(&odd_samples);
+        // Only processes first 2 samples, third is lost
+        assert_eq!(result, vec![150]);
+    }
+
+    #[test]
+    fn test_stereo_to_mono_single_sample() {
+        // Single sample: chunks_exact yields nothing (lossy!)
+        // This is a bug - input is silently dropped
+        let single = vec![100i16];
+        let result = stereo_to_mono(&single);
+        assert!(result.is_empty()); // Sample is lost!
+    }
+
+    #[test]
+    fn test_stereo_to_mono_empty() {
+        // Empty input should return empty output
+        let empty: Vec<i16> = vec![];
+        let result = stereo_to_mono(&empty);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_f32_slice_to_i16_empty() {
+        let empty: Vec<f32> = vec![];
+        let result = f32_slice_to_i16(&empty);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_i16_slice_to_f32_edge_values() {
+        let samples = vec![i16::MIN, i16::MAX, 0];
+        let result = i16_slice_to_f32(&samples);
+
+        assert_eq!(result.len(), 3);
+        assert!((result[0] - (-1.0)).abs() < 0.001); // MIN → -1.0
+        assert!((result[1] - 0.99997).abs() < 0.001); // MAX → ~1.0
+        assert_eq!(result[2], 0.0); // 0 → 0.0
+    }
 }

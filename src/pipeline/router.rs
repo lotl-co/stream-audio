@@ -239,10 +239,17 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Mutex;
+
     struct TestSink {
         name: String,
         write_count: AtomicUsize,
         fail_count: AtomicUsize,
+        stop_called: AtomicBool,
+        stop_fail: AtomicBool,
+        /// Tracks timestamps of chunks received for order verification.
+        received_timestamps: Mutex<Vec<Duration>>,
     }
 
     impl TestSink {
@@ -251,6 +258,9 @@ mod tests {
                 name: name.to_string(),
                 write_count: AtomicUsize::new(0),
                 fail_count: AtomicUsize::new(0),
+                stop_called: AtomicBool::new(false),
+                stop_fail: AtomicBool::new(false),
+                received_timestamps: Mutex::new(Vec::new()),
             }
         }
 
@@ -259,11 +269,33 @@ mod tests {
                 name: name.to_string(),
                 write_count: AtomicUsize::new(0),
                 fail_count: AtomicUsize::new(fail_times),
+                stop_called: AtomicBool::new(false),
+                stop_fail: AtomicBool::new(false),
+                received_timestamps: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn with_stop_failure(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+                write_count: AtomicUsize::new(0),
+                fail_count: AtomicUsize::new(0),
+                stop_called: AtomicBool::new(false),
+                stop_fail: AtomicBool::new(true),
+                received_timestamps: Mutex::new(Vec::new()),
             }
         }
 
         fn writes(&self) -> usize {
             self.write_count.load(Ordering::SeqCst)
+        }
+
+        fn was_stopped(&self) -> bool {
+            self.stop_called.load(Ordering::SeqCst)
+        }
+
+        fn timestamps(&self) -> Vec<Duration> {
+            self.received_timestamps.lock().unwrap().clone()
         }
     }
 
@@ -273,13 +305,25 @@ mod tests {
             &self.name
         }
 
-        async fn write(&self, _chunk: &AudioChunk) -> Result<(), SinkError> {
+        async fn write(&self, chunk: &AudioChunk) -> Result<(), SinkError> {
             let remaining = self.fail_count.load(Ordering::SeqCst);
             if remaining > 0 {
                 self.fail_count.fetch_sub(1, Ordering::SeqCst);
                 return Err(SinkError::custom("intentional failure"));
             }
             self.write_count.fetch_add(1, Ordering::SeqCst);
+            self.received_timestamps
+                .lock()
+                .unwrap()
+                .push(chunk.timestamp);
+            Ok(())
+        }
+
+        async fn on_stop(&self) -> Result<(), SinkError> {
+            self.stop_called.store(true, Ordering::SeqCst);
+            if self.stop_fail.load(Ordering::SeqCst) {
+                return Err(SinkError::custom("stop failed"));
+            }
             Ok(())
         }
     }
@@ -401,5 +445,235 @@ mod tests {
         router.write_chunk(&chunk_from("speaker", 50)).await;
         assert_eq!(sink_broadcast.writes(), 2);
         assert_eq!(sink_mic_only.writes(), 1);
+    }
+
+    // ==================== stop_sinks() Tests ====================
+
+    #[tokio::test]
+    async fn test_stop_sinks_calls_all_sinks() {
+        let sink1 = Arc::new(TestSink::new("sink1"));
+        let sink2 = Arc::new(TestSink::new("sink2"));
+        let sink3 = Arc::new(TestSink::new("sink3"));
+
+        let router = Router::new(
+            vec![sink1.clone(), sink2.clone(), sink3.clone()],
+            StreamConfig::default(),
+        );
+
+        router.stop_sinks().await;
+
+        assert!(sink1.was_stopped());
+        assert!(sink2.was_stopped());
+        assert!(sink3.was_stopped());
+    }
+
+    #[tokio::test]
+    async fn test_stop_sinks_continues_after_failure() {
+        let sink1 = Arc::new(TestSink::new("sink1"));
+        let sink2 = Arc::new(TestSink::with_stop_failure("sink2"));
+        let sink3 = Arc::new(TestSink::new("sink3"));
+
+        let router = Router::new(
+            vec![sink1.clone(), sink2.clone(), sink3.clone()],
+            StreamConfig::default(),
+        );
+
+        router.stop_sinks().await;
+
+        // All sinks should have on_stop called, even after sink2 fails
+        assert!(sink1.was_stopped());
+        assert!(sink2.was_stopped());
+        assert!(sink3.was_stopped());
+    }
+
+    #[tokio::test]
+    async fn test_stop_sinks_emits_error_events() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+
+        let callback: EventCallback = Arc::new(move |e| {
+            events_clone.lock().unwrap().push(e);
+        });
+
+        let sink1 = Arc::new(TestSink::new("sink1"));
+        let sink2 = Arc::new(TestSink::with_stop_failure("failing_sink"));
+
+        let router =
+            Router::new(vec![sink1, sink2], StreamConfig::default()).with_event_callback(callback);
+
+        router.stop_sinks().await;
+
+        let captured = events.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+
+        if let StreamEvent::SinkError { sink_name, error } = &captured[0] {
+            assert_eq!(sink_name, "failing_sink");
+            assert!(error.contains("Error during shutdown:"));
+        } else {
+            panic!("Expected SinkError event");
+        }
+    }
+
+    // ==================== drain_remaining() Tests ====================
+
+    #[tokio::test]
+    async fn test_drain_remaining_preserves_order() {
+        let sink = Arc::new(TestSink::new("sink"));
+        let router = Router::new(vec![sink.clone()], StreamConfig::default());
+
+        let (chunk_tx, mut chunk_rx) = mpsc::channel(10);
+
+        // Send chunks with distinct timestamps
+        for i in 0..5 {
+            let chunk = AudioChunk::new(
+                vec![i as i16; 100],
+                Duration::from_millis(i as u64 * 100),
+                16000,
+                1,
+            );
+            chunk_tx.send(chunk).await.unwrap();
+        }
+        drop(chunk_tx);
+
+        router.drain_remaining(&mut chunk_rx).await;
+
+        // Verify order preserved
+        let timestamps = sink.timestamps();
+        assert_eq!(timestamps.len(), 5);
+        for i in 0..5 {
+            assert_eq!(timestamps[i], Duration::from_millis(i as u64 * 100));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_drain_remaining_empty_queue() {
+        let sink = Arc::new(TestSink::new("sink"));
+        let router = Router::new(vec![sink.clone()], StreamConfig::default());
+
+        let (_tx, mut chunk_rx) = mpsc::channel::<AudioChunk>(10);
+        // Don't send any chunks, just drop sender
+        drop(_tx);
+
+        // Should not panic
+        router.drain_remaining(&mut chunk_rx).await;
+
+        assert_eq!(sink.writes(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_drain_remaining_respects_retries() {
+        let sink = Arc::new(TestSink::failing("sink", 2)); // Fails twice, then succeeds
+
+        let mut config = StreamConfig::default();
+        config.sink_retry_delay = Duration::from_millis(1);
+
+        let router = Router::new(vec![sink.clone()], config);
+
+        let (chunk_tx, mut chunk_rx) = mpsc::channel(10);
+        chunk_tx
+            .send(AudioChunk::new(vec![0; 100], Duration::ZERO, 16000, 1))
+            .await
+            .unwrap();
+        drop(chunk_tx);
+
+        router.drain_remaining(&mut chunk_rx).await;
+
+        // Should have retried and succeeded
+        assert_eq!(sink.writes(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_drain_remaining_applies_routing() {
+        let sink_mic = Arc::new(TestSink::new("mic"));
+        let sink_speaker = Arc::new(TestSink::new("speaker"));
+
+        let routes = vec![
+            SinkRoute::Single(SourceId::new("mic")),
+            SinkRoute::Single(SourceId::new("speaker")),
+        ];
+
+        let router = Router::with_routing(
+            vec![sink_mic.clone(), sink_speaker.clone()],
+            &routes,
+            &[SourceId::new("mic"), SourceId::new("speaker")],
+            StreamConfig::default(),
+        )
+        .unwrap();
+
+        let (chunk_tx, mut chunk_rx) = mpsc::channel(10);
+        // Send mic chunk
+        chunk_tx.send(chunk_from("mic", 0)).await.unwrap();
+        drop(chunk_tx);
+
+        router.drain_remaining(&mut chunk_rx).await;
+
+        // Only mic sink should have received it
+        assert_eq!(sink_mic.writes(), 1);
+        assert_eq!(sink_speaker.writes(), 0);
+    }
+
+    // ==================== Integration Tests ====================
+
+    #[tokio::test]
+    async fn test_run_drains_before_stop() {
+        let sink = Arc::new(TestSink::new("sink"));
+        let router = Router::new(vec![sink.clone()], StreamConfig::default());
+
+        let (chunk_tx, chunk_rx) = mpsc::channel(10);
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+
+        // Send 3 chunks
+        for i in 0..3 {
+            chunk_tx
+                .send(AudioChunk::new(
+                    vec![i as i16; 100],
+                    Duration::from_millis(i as u64 * 100),
+                    16000,
+                    1,
+                ))
+                .await
+                .unwrap();
+        }
+
+        // Send stop command
+        cmd_tx.send(RouterCommand::Stop).await.unwrap();
+
+        // Run router
+        router.run(chunk_rx, cmd_rx).await;
+
+        // All 3 chunks should have been processed
+        assert_eq!(sink.writes(), 3);
+        // on_stop should have been called
+        assert!(sink.was_stopped());
+    }
+
+    #[tokio::test]
+    async fn test_run_stops_sinks_after_drain() {
+        let sink1 = Arc::new(TestSink::new("sink1"));
+        let sink2 = Arc::new(TestSink::with_stop_failure("sink2"));
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let callback: EventCallback = Arc::new(move |e| {
+            events_clone.lock().unwrap().push(e);
+        });
+
+        let router = Router::new(vec![sink1.clone(), sink2.clone()], StreamConfig::default())
+            .with_event_callback(callback);
+
+        let (_chunk_tx, chunk_rx) = mpsc::channel(10);
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+
+        cmd_tx.send(RouterCommand::Stop).await.unwrap();
+
+        router.run(chunk_rx, cmd_rx).await;
+
+        // Both sinks should have on_stop called
+        assert!(sink1.was_stopped());
+        assert!(sink2.was_stopped());
+
+        // Error event should have been emitted for sink2
+        let captured = events.lock().unwrap();
+        assert_eq!(captured.len(), 1);
     }
 }

@@ -152,4 +152,95 @@ mod tests {
         assert!(resampled.len() < samples.len());
         assert_eq!(resampled.len() % 2, 0);
     }
+
+    // ==================== Edge Case Tests ====================
+
+    #[test]
+    fn test_resample_zero_to_rate() {
+        // to_rate=0 means ratio=0, output_len=0
+        let samples = vec![100i16, 200, 300];
+        let result = resample(&samples, 16000, 0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_resample_zero_from_rate() {
+        // from_rate=0 causes division by zero → infinity ratio
+        // This results in a massive output (may OOM or hang)
+        // We just document this is undefined behavior
+        // let _samples = vec![100i16];
+        // let _result = resample(&_samples, 0, 16000);
+        // Would produce output_len = (1 * inf).ceil() which overflows
+        // TEST INTENTIONALLY LEFT EMPTY - documents UB
+    }
+
+    #[test]
+    fn test_resample_extreme_upsample() {
+        // Extreme upsample: 1Hz to 1000Hz (1000x)
+        let samples = vec![0i16, 1000];
+        let result = resample(&samples, 1, 1000);
+
+        // Should produce ~2000 samples (2 samples * 1000)
+        assert_eq!(result.len(), 2000);
+        // First sample should be 0
+        assert_eq!(result[0], 0);
+        // Last sample should be 1000 (or close)
+        assert_eq!(*result.last().unwrap(), 1000);
+    }
+
+    #[test]
+    fn test_resample_single_sample() {
+        // Single sample resampled to higher rate
+        let samples = vec![500i16];
+        let result = resample(&samples, 1, 10);
+
+        // Should produce ~10 copies of the same sample
+        assert_eq!(result.len(), 10);
+        // All samples should be 500 (no interpolation possible)
+        assert!(result.iter().all(|&s| s == 500));
+    }
+
+    #[test]
+    fn test_resample_stereo_odd_samples() {
+        // Odd number of stereo samples with actual resampling
+        // chunks_exact ignores remainder (lossy!)
+        let odd_stereo = vec![100i16, 200, 300]; // 1.5 frames
+                                                 // Force actual resampling (not same-rate early return)
+        let result = resample_stereo(&odd_stereo, 16000, 32000);
+        // Only first complete frame (2 samples) is deinterleaved and processed
+        // Third sample is lost, then result is upsampled and reinterleaved
+        assert_eq!(result.len() % 2, 0); // Should be even (stereo pairs)
+    }
+
+    #[test]
+    fn test_resample_stereo_single_sample() {
+        // Single sample with actual resampling: no complete stereo frames
+        let single = vec![100i16];
+        // Force actual resampling (not same-rate early return)
+        let result = resample_stereo(&single, 16000, 32000);
+        assert!(result.is_empty()); // Sample is lost!
+    }
+
+    #[test]
+    fn test_resample_stereo_same_rate_passthrough() {
+        // Same rate: early return bypasses deinterleaving, preserves all samples
+        let odd_stereo = vec![100i16, 200, 300];
+        let result = resample_stereo(&odd_stereo, 16000, 16000);
+        // Early return means no loss - all samples preserved (even if odd)
+        assert_eq!(result, vec![100, 200, 300]);
+    }
+
+    #[test]
+    fn test_resample_precision_boundary() {
+        // Test interpolation at exact sample boundaries
+        let samples = vec![0i16, 100, 200, 300];
+        // 2x upsample: should land on original samples at even indices
+        let result = resample(&samples, 1, 2);
+
+        // Original samples should appear at even positions
+        assert_eq!(result[0], 0);
+        assert_eq!(result[2], 100);
+        assert_eq!(result[4], 200);
+        assert_eq!(result[6], 300);
+    }
 }

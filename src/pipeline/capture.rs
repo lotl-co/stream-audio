@@ -596,6 +596,45 @@ pub fn spawn_capture_bridge(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ringbuf::traits::{Producer, Split};
+    use ringbuf::HeapRb;
+    use std::sync::Mutex;
+
+    /// Helper to create a ring buffer pair for testing.
+    fn create_test_ring_buffer(
+        capacity: usize,
+    ) -> (ringbuf::HeapProd<i16>, ringbuf::HeapCons<i16>) {
+        let rb = HeapRb::<i16>::new(capacity);
+        rb.split()
+    }
+
+    /// Helper to create a test CaptureConfig.
+    fn create_test_config(
+        device_sample_rate: u32,
+        device_channels: u16,
+        target_sample_rate: u32,
+        target_channels: u16,
+    ) -> CaptureConfig {
+        CaptureConfig {
+            device_sample_rate,
+            device_channels,
+            target_sample_rate,
+            target_channels,
+            chunk_duration: Duration::from_millis(100),
+            source_id: Some(SourceId::new("test")),
+            session_start: Instant::now(),
+        }
+    }
+
+    /// Helper to capture events from the CaptureBridge.
+    fn create_event_capture() -> (EventCallback, Arc<Mutex<Vec<StreamEvent>>>) {
+        let events: Arc<Mutex<Vec<StreamEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let callback: EventCallback = Arc::new(move |event| {
+            events_clone.lock().unwrap().push(event);
+        });
+        (callback, events)
+    }
 
     #[test]
     fn test_capture_config_creation() {
@@ -1132,6 +1171,437 @@ mod tests {
             assert_eq!(source_id.as_str(), "default");
         } else {
             panic!("Expected AudioQualityReport");
+        }
+    }
+
+    // ==================== CaptureBridge Async Tests ====================
+
+    #[tokio::test]
+    async fn test_capture_bridge_processes_single_chunk() {
+        let (mut producer, consumer) = create_test_ring_buffer(10000);
+        let config = create_test_config(16000, 1, 16000, 1);
+        let (tx, mut rx) = mpsc::channel::<AudioChunk>(10);
+        let state = Arc::new(SessionState::new());
+        let (callback, _events) = create_event_capture();
+
+        // Push exactly one chunk worth of samples (100ms at 16kHz = 1600 samples)
+        for i in 0..1600i16 {
+            let _ = producer.try_push(i);
+        }
+
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), Some(callback));
+
+        // Run bridge in background, stop quickly
+        let state_clone = Arc::clone(&state);
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        // Wait for processing
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        state_clone.running.store(false, Ordering::SeqCst);
+
+        handle.await.unwrap();
+
+        // Should have received one chunk
+        let chunk = rx.try_recv().expect("Should receive a chunk");
+        assert_eq!(chunk.samples.len(), 1600);
+        assert_eq!(chunk.sample_rate, 16000);
+        assert_eq!(chunk.channels, 1);
+    }
+
+    #[tokio::test]
+    async fn test_capture_bridge_processes_multiple_chunks() {
+        let (mut producer, consumer) = create_test_ring_buffer(20000);
+        let config = create_test_config(16000, 1, 16000, 1);
+        let (tx, mut rx) = mpsc::channel::<AudioChunk>(10);
+        let state = Arc::new(SessionState::new());
+
+        // Push 3 chunks worth of samples (4800 samples)
+        for i in 0..4800i16 {
+            let _ = producer.try_push(i % 1000);
+        }
+
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), None);
+
+        let state_clone = Arc::clone(&state);
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        state_clone.running.store(false, Ordering::SeqCst);
+        handle.await.unwrap();
+
+        // Should have received 3 chunks
+        let mut chunks = Vec::new();
+        while let Ok(chunk) = rx.try_recv() {
+            chunks.push(chunk);
+        }
+        assert_eq!(chunks.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_capture_bridge_applies_format_conversion() {
+        let (mut producer, consumer) = create_test_ring_buffer(20000);
+        // Device: 48kHz stereo -> Target: 16kHz mono
+        let config = create_test_config(48000, 2, 16000, 1);
+        let (tx, mut rx) = mpsc::channel::<AudioChunk>(10);
+        let state = Arc::new(SessionState::new());
+
+        // Push 100ms at 48kHz stereo = 9600 samples (4800 frames * 2 channels)
+        // Stereo pairs: L=500, R=300 -> mono average = 400
+        for _ in 0..4800 {
+            let _ = producer.try_push(500); // Left
+            let _ = producer.try_push(300); // Right
+        }
+
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), None);
+
+        let state_clone = Arc::clone(&state);
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        state_clone.running.store(false, Ordering::SeqCst);
+        handle.await.unwrap();
+
+        let chunk = rx.try_recv().expect("Should receive converted chunk");
+        // 48kHz -> 16kHz = 3:1, so 4800 frames -> 1600 frames
+        // mono = 1 channel, so 1600 samples
+        assert_eq!(chunk.sample_rate, 16000);
+        assert_eq!(chunk.channels, 1);
+        assert_eq!(chunk.samples.len(), 1600);
+        // Verify conversion: stereo (500, 300) -> mono 400
+        assert!(chunk.samples.iter().all(|&s| s == 400));
+    }
+
+    #[tokio::test]
+    async fn test_capture_bridge_timestamps_monotonic() {
+        let (mut producer, consumer) = create_test_ring_buffer(20000);
+        let config = create_test_config(16000, 1, 16000, 1);
+        let (tx, mut rx) = mpsc::channel::<AudioChunk>(10);
+        let state = Arc::new(SessionState::new());
+
+        // Push 3 chunks worth
+        for _ in 0..4800i16 {
+            let _ = producer.try_push(100);
+        }
+
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), None);
+
+        let state_clone = Arc::clone(&state);
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        state_clone.running.store(false, Ordering::SeqCst);
+        handle.await.unwrap();
+
+        let mut chunks = Vec::new();
+        while let Ok(chunk) = rx.try_recv() {
+            chunks.push(chunk);
+        }
+
+        // Verify timestamps are monotonically increasing
+        for i in 1..chunks.len() {
+            assert!(
+                chunks[i].timestamp > chunks[i - 1].timestamp,
+                "Timestamps should be monotonically increasing"
+            );
+        }
+
+        // Each chunk is 100ms, so second chunk should be ~100ms after first
+        if chunks.len() >= 2 {
+            let diff = chunks[1].timestamp - chunks[0].timestamp;
+            assert!(
+                (diff.as_millis() as i64 - 100).abs() < 10,
+                "Chunk spacing should be ~100ms"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_capture_bridge_updates_samples_captured() {
+        let (mut producer, consumer) = create_test_ring_buffer(10000);
+        let config = create_test_config(16000, 1, 16000, 1);
+        let (tx, _rx) = mpsc::channel::<AudioChunk>(10);
+        let state = Arc::new(SessionState::new());
+
+        // Push 2 chunks worth (3200 samples)
+        for _ in 0..3200i16 {
+            let _ = producer.try_push(100);
+        }
+
+        let state_clone = Arc::clone(&state);
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), None);
+
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        state_clone.running.store(false, Ordering::SeqCst);
+        handle.await.unwrap();
+
+        // Should have captured 3200 samples (2 chunks)
+        let captured = state.samples_captured.load(Ordering::SeqCst);
+        assert_eq!(captured, 3200, "Should track samples captured correctly");
+    }
+
+    #[tokio::test]
+    async fn test_capture_bridge_updates_chunks_processed() {
+        let (mut producer, consumer) = create_test_ring_buffer(10000);
+        let config = create_test_config(16000, 1, 16000, 1);
+        let (tx, _rx) = mpsc::channel::<AudioChunk>(10);
+        let state = Arc::new(SessionState::new());
+
+        // Push 2 chunks worth
+        for _ in 0..3200i16 {
+            let _ = producer.try_push(100);
+        }
+
+        let state_clone = Arc::clone(&state);
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), None);
+
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        state_clone.running.store(false, Ordering::SeqCst);
+        handle.await.unwrap();
+
+        let chunks = state.chunks_processed.load(Ordering::SeqCst);
+        assert_eq!(chunks, 2, "Should track chunks processed correctly");
+    }
+
+    #[tokio::test]
+    async fn test_capture_bridge_tracks_clipped_samples() {
+        let (mut producer, consumer) = create_test_ring_buffer(10000);
+        let config = create_test_config(16000, 1, 16000, 1);
+        let (tx, _rx) = mpsc::channel::<AudioChunk>(10);
+        let state = Arc::new(SessionState::new());
+
+        // Push chunk with clipped samples (i16::MAX and i16::MIN count as clipped)
+        for i in 0..1600i16 {
+            if i < 10 {
+                let _ = producer.try_push(i16::MAX);
+            } else if i < 20 {
+                let _ = producer.try_push(i16::MIN);
+            } else {
+                let _ = producer.try_push(100);
+            }
+        }
+
+        let state_clone = Arc::clone(&state);
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), None);
+
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        state_clone.running.store(false, Ordering::SeqCst);
+        handle.await.unwrap();
+
+        let clipped = state.clipped_samples.load(Ordering::SeqCst);
+        assert_eq!(
+            clipped, 20,
+            "Should track 20 clipped samples (10 MAX + 10 MIN)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_capture_bridge_stops_on_running_false() {
+        let (mut producer, consumer) = create_test_ring_buffer(50000);
+        let config = create_test_config(16000, 1, 16000, 1);
+        let (tx, _rx) = mpsc::channel::<AudioChunk>(100);
+        let state = Arc::new(SessionState::new());
+
+        // Push a lot of data
+        for _ in 0..32000i16 {
+            let _ = producer.try_push(100);
+        }
+
+        let state_clone = Arc::clone(&state);
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), None);
+
+        // Stop immediately
+        state_clone.running.store(false, Ordering::SeqCst);
+
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        // Should complete quickly since running is false
+        let result = tokio::time::timeout(Duration::from_secs(1), handle).await;
+        assert!(result.is_ok(), "Bridge should stop when running is false");
+    }
+
+    #[tokio::test]
+    async fn test_capture_bridge_drains_remaining_on_stop() {
+        let (mut producer, consumer) = create_test_ring_buffer(10000);
+        let config = create_test_config(16000, 1, 16000, 1);
+        let (tx, mut rx) = mpsc::channel::<AudioChunk>(10);
+        let state = Arc::new(SessionState::new());
+
+        // Push 2.5 chunks worth (4000 samples = 2 full + 800 partial)
+        for i in 0..4000i16 {
+            let _ = producer.try_push(i % 1000);
+        }
+
+        let state_clone = Arc::clone(&state);
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), None);
+
+        // Stop immediately to trigger drain
+        state_clone.running.store(false, Ordering::SeqCst);
+
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        handle.await.unwrap();
+
+        // Drain should have produced all chunks including partial
+        let mut chunks = Vec::new();
+        while let Ok(chunk) = rx.try_recv() {
+            chunks.push(chunk);
+        }
+
+        // Should have 3 chunks (2 full of 1600 + 1 partial of 800)
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].samples.len(), 1600);
+        assert_eq!(chunks[1].samples.len(), 1600);
+        assert_eq!(chunks[2].samples.len(), 800);
+    }
+
+    #[tokio::test]
+    async fn test_capture_bridge_flushes_gaps_on_drain() {
+        let (mut producer, consumer) = create_test_ring_buffer(10000);
+        let config = create_test_config(16000, 1, 16000, 1);
+        let (tx, _rx) = mpsc::channel::<AudioChunk>(10);
+        let state = Arc::new(SessionState::new());
+        let (callback, events) = create_event_capture();
+
+        // Push chunk that ends with a long gap (over threshold)
+        // 100 non-zero samples, then 900 zeros (56ms gap at 16kHz > 50ms threshold)
+        for i in 0..100i16 {
+            let _ = producer.try_push(i + 1);
+        }
+        for _ in 0..900i16 {
+            let _ = producer.try_push(0);
+        }
+        // Add more to make a complete chunk
+        for _ in 0..600i16 {
+            let _ = producer.try_push(0);
+        }
+
+        let state_clone = Arc::clone(&state);
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), Some(callback));
+
+        // Stop immediately to trigger drain+flush
+        state_clone.running.store(false, Ordering::SeqCst);
+
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        handle.await.unwrap();
+
+        // Check for gap event
+        let captured_events = events.lock().unwrap();
+        let gap_events: Vec<_> = captured_events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::AudioGapDetected { .. }))
+            .collect();
+
+        // The gap monitor should detect and flush the trailing gap
+        // (1500 consecutive zeros > 800 threshold at 16kHz)
+        assert!(
+            !gap_events.is_empty(),
+            "Should emit gap event for trailing zeros"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_capture_bridge_emits_quality_events() {
+        let (mut producer, consumer) = create_test_ring_buffer(10000);
+        let config = create_test_config(16000, 1, 16000, 1);
+        let (tx, _rx) = mpsc::channel::<AudioChunk>(10);
+        let state = Arc::new(SessionState::new());
+        let (callback, events) = create_event_capture();
+
+        // Push one chunk with known characteristics
+        for _ in 0..1600i16 {
+            let _ = producer.try_push(500);
+        }
+
+        let state_clone = Arc::clone(&state);
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), Some(callback));
+
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        state_clone.running.store(false, Ordering::SeqCst);
+        handle.await.unwrap();
+
+        let captured_events = events.lock().unwrap();
+        let quality_events: Vec<_> = captured_events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::AudioQualityReport { .. }))
+            .collect();
+
+        assert!(!quality_events.is_empty(), "Should emit quality events");
+        if let StreamEvent::AudioQualityReport { peak_amplitude, .. } = quality_events[0] {
+            assert_eq!(*peak_amplitude, 500, "Peak should match input");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_capture_bridge_emits_gap_events() {
+        let (mut producer, consumer) = create_test_ring_buffer(10000);
+        let config = create_test_config(16000, 1, 16000, 1);
+        let (tx, _rx) = mpsc::channel::<AudioChunk>(10);
+        let state = Arc::new(SessionState::new());
+        let (callback, events) = create_event_capture();
+
+        // Push chunk with a gap exceeding threshold (800 samples = 50ms at 16kHz)
+        for i in 0..1600i16 {
+            if i < 100 || i >= 1000 {
+                let _ = producer.try_push(500);
+            } else {
+                let _ = producer.try_push(0); // 900 zeros = gap
+            }
+        }
+
+        let state_clone = Arc::clone(&state);
+        let bridge = CaptureBridge::new(consumer, &config, tx, Arc::clone(&state), Some(callback));
+
+        let handle = tokio::spawn(async move {
+            bridge.run().await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        state_clone.running.store(false, Ordering::SeqCst);
+        handle.await.unwrap();
+
+        let captured_events = events.lock().unwrap();
+        let gap_events: Vec<_> = captured_events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::AudioGapDetected { .. }))
+            .collect();
+
+        assert!(
+            !gap_events.is_empty(),
+            "Should emit gap event for 900 zeros"
+        );
+        if let StreamEvent::AudioGapDetected { gap_samples, .. } = gap_events[0] {
+            assert_eq!(*gap_samples, 900, "Gap should be 900 samples");
         }
     }
 }
