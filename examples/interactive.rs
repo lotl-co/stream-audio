@@ -49,6 +49,8 @@ fn list_available_sources() -> Vec<SourceOption> {
 }
 
 fn prompt_source_selection(sources: &[SourceOption]) -> Vec<usize> {
+    const DEFAULT_SELECTION: [usize; 1] = [0];
+
     println!("\nAvailable audio sources:");
     println!("------------------------");
     for (i, source) in sources.iter().enumerate() {
@@ -68,19 +70,19 @@ fn prompt_source_selection(sources: &[SourceOption]) -> Vec<usize> {
 
     let mut input = String::new();
     if io::stdin().read_line(&mut input).is_err() {
-        return vec![0]; // Default to first source
+        return DEFAULT_SELECTION.to_vec();
     }
 
     let input = input.trim();
     if input.is_empty() {
-        return vec![0]; // Default to first source
+        return DEFAULT_SELECTION.to_vec();
     }
 
     input
         .split(',')
         .filter_map(|s| s.trim().parse::<usize>().ok())
         .filter(|&n| n > 0 && n <= sources.len())
-        .map(|n| n - 1) // Convert to 0-indexed
+        .map(|n| n - 1)
         .collect()
 }
 
@@ -117,10 +119,12 @@ fn sanitize_filename(name: &str) -> String {
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .collect();
-    // Remove leading/trailing underscores and collapse multiple underscores
-    sanitized
-        .split('_')
-        .filter(|s| !s.is_empty())
+    normalize_underscores(&sanitized)
+}
+
+fn normalize_underscores(s: &str) -> String {
+    s.split('_')
+        .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("_")
 }
